@@ -9,6 +9,7 @@ find_package(catkin REQUIRED
     roscpp
     cv_bridge
     message_filters
+    tf
   )
 
 find_package(OpenCV 3.0 QUIET)
