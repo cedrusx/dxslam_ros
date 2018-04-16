@@ -36,13 +36,16 @@ public:
     typedef message_filters::sync_policies::ApproximateTime<sensor_msgs::Image, sensor_msgs::Image> sync_policy;
     message_filters::Synchronizer<sync_policy> image_sync_;
 
-    ros::Publisher pub_pose_, pub_pc_, pub_pose_1_;
-    tf::TransformListener tf_;
-    tf::TransformBroadcaster tfB_;
+    ros::Publisher pub_pose_, pub_pose2d_, pub_pc_, pub_pose_1_;
+    tf::TransformListener tf_listener_;
+    tf::TransformBroadcaster tf_broadcaster_;
 
 private:
+    bool getTransform(tf::StampedTransform &transform, std::string from, std::string to, ros::Time stamp);
+
     std::unique_ptr<ORB_SLAM2::System> slam_;
-    std::string p_image_topic_, p_depth_topic_, p_ref_frame_;
+    std::string p_image_topic_, p_depth_topic_;
+    std::string p_ref_frame_, p_parent_frame_, p_child_frame_;
     std::string p_orb_vocabulary_, p_orb_settings_;
 };
 
@@ -61,6 +64,10 @@ Maslam::Maslam() : image_sync_(sync_policy(10))
 
     pnh.param("image_topic", p_image_topic_, std::string("camera/color/image_raw"));
     pnh.param("depth_topic", p_depth_topic_, std::string("camera/depth/image_rect_raw"));
+
+    // Set ROS frames between which we should publish tf. Default: reference frame -> RGB image frame
+    pnh.param("pub_tf_parent_frame", p_parent_frame_, std::string(""));
+    pnh.param("pub_tf_child_frame", p_child_frame_, std::string(""));
     pnh.param("reference_frame", p_ref_frame_, std::string("vslam_origin"));
 
     pnh.param("orb_vocabulary", p_orb_vocabulary_, std::string(ORB_SLAM2_PATH) + "/Vocabulary/ORBvoc.txt");
@@ -74,6 +81,7 @@ Maslam::Maslam() : image_sync_(sync_policy(10))
 
     pub_pc_ = pnh.advertise<sensor_msgs::PointCloud>("pointcloud", 1);
     pub_pose_ = pnh.advertise<geometry_msgs::PoseStamped>("pose", 1);
+    pub_pose2d_ = pnh.advertise<geometry_msgs::PoseStamped>("pose2d", 1);
     pub_pose_1_ = pnh.advertise<geometry_msgs::PoseStamped>("pose1", 1);
 
     sub_image_.subscribe(nh, p_image_topic_, 1);
@@ -120,7 +128,7 @@ void Maslam::imageCallback(const sensor_msgs::ImageConstPtr& msgRGB,const sensor
             return;
     }
 
-    // Publish pose and tf
+    // Publish pose
     cv::Mat Rwc = Tcw.rowRange(0,3).colRange(0,3).t();
     cv::Mat twc = -Rwc*Tcw.rowRange(0,3).col(3);
     // x right, y down, z forward
@@ -139,9 +147,30 @@ void Maslam::imageCallback(const sensor_msgs::ImageConstPtr& msgRGB,const sensor
     msg.pose.orientation.z = eigq.z();
     msg.pose.orientation.w = eigq.w();
     pub_pose_.publish(msg);
-    tf::Transform map_to_cam;
-    tf::poseMsgToTF(msg.pose, map_to_cam);
-    tfB_.sendTransform(tf::StampedTransform(map_to_cam, msg.header.stamp, msg.header.frame_id, msgRGB->header.frame_id));
+
+    // Publish tf
+    tf::Transform ref_to_image;
+    tf::StampedTransform parent_to_ref, child_to_image;
+    tf::poseMsgToTF(msg.pose, ref_to_image);
+    std::string image_frame = msgRGB->header.frame_id;
+    std::string parent_frame = p_parent_frame_, child_frame = p_child_frame_;
+    bool get_tf_succeed = true;
+    if (p_parent_frame_.empty()) {
+        parent_frame = p_ref_frame_;
+        parent_to_ref.setIdentity();
+    } else {
+        get_tf_succeed &= getTransform(parent_to_ref, parent_frame, p_ref_frame_, msg.header.stamp);
+    }
+    if (p_child_frame_.empty()) {
+        child_frame = image_frame;
+        child_to_image.setIdentity();
+    } else {
+        get_tf_succeed &= getTransform(child_to_image, child_frame, image_frame, msg.header.stamp);
+    }
+    if (get_tf_succeed) {
+        tf::Transform parent_to_child = tf::Transform(parent_to_ref * ref_to_image * child_to_image.inverse());
+        tf_broadcaster_.sendTransform(tf::StampedTransform(parent_to_child, msg.header.stamp, parent_frame, child_frame));
+    }
 
     cv::Mat pose = Tcw;
 
@@ -156,9 +185,7 @@ void Maslam::imageCallback(const sensor_msgs::ImageConstPtr& msgRGB,const sensor
                                     pose.at<float>(2,0), - pose.at<float>(2,1), - pose.at<float>(2,2));
 
     tf::Vector3 rh_cameraTranslation( pose.at<float>(0,3),pose.at<float>(1,3), - pose.at<float>(2,3) );
-    std::cout << Tcw << std::endl;
-    printf("a: %f %f %f\n", twc.at<float>(0), twc.at<float>(1), twc.at<float>(2));
-    printf("b: %f %f %f\n", pose.at<float>(0,3), pose.at<float>(1,3), pose.at<float>(2,3));
+    //std::cout << Tcw << std::endl;
 
     //rotate 270deg about z and 270deg about x
     tf::Matrix3x3 rotation270degZX( 0, 0, 1,
@@ -235,7 +262,7 @@ void Maslam::imageCallback(const sensor_msgs::ImageConstPtr& msgRGB,const sensor
     tf::Matrix3x3 globalRotation_rh = cameraRotation_rh * rotation270degXZ;
     tf::Vector3 globalTranslation_rh = cameraTranslation_rh * rotation270degXZ;
     tf::Transform transform = tf::Transform(globalRotation_rh, globalTranslation_rh);
-    tfB_.sendTransform(tf::StampedTransform(transform, ros::Time::now(), p_ref_frame_, "camera_pose"));
+    tf_broadcaster_.sendTransform(tf::StampedTransform(transform, ros::Time::now(), p_ref_frame_, "camera_pose"));
 }
 
 
@@ -279,4 +306,17 @@ void Maslam::publishPose(const geometry_msgs::PoseStamped &msg)
     if (p_pub_map_scanmatch_transform_){
         tfB_.sendTransform(tf::StampedTransform(map_to_pose, msg.header.stamp, p_map_frame_, p_scanmatch_frame_));
     }*/
+}
+
+bool Maslam::getTransform(tf::StampedTransform &transform, std::string from, std::string to, ros::Time stamp)
+{
+    try {
+        //tf_listener_.waitForTransform(from, to, stamp, ros::Duration(0.5));
+        tf_listener_.lookupTransform(from, to, stamp, transform);
+        return true;
+    } catch (tf::TransformException e) {
+        ROS_ERROR("Failed to get transform from %s to %s: %s",
+            from.c_str(), to.c_str(), e.what());
+        return false;
+    }
 }
