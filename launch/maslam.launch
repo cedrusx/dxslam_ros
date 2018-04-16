@@ -1,0 +1,15 @@
+<launch>
+  <param name="use_sim_time" value="false" />
+
+  <node name="map_vslam_tf" pkg="tf" type="static_transform_publisher" args="0 0 0 -1.5708 0 -1.5708 /map /vslam_origin 100" />
+
+  <node name="base_camera_tf" pkg="tf" type="static_transform_publisher" args="0 0 0 0 0 0 /base_link /camera_link 100" />
+
+  <node pkg="maslam" type="maslam" name="maslam" output="screen">
+    <param name="reference_frame" value="vslam_origin"/>
+    <param name="pub_tf_parent_frame" value="map"/>
+    <param name="pub_tf_child_frame" value="base_link"/>
+  </node>
+
+  <node name="rviz" pkg="rviz" type="rviz" args="" />
+</launch>
