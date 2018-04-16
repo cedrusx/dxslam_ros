@@ -11,6 +11,8 @@
     <maintainer email="xuesong.shi@intel.com">Xuesong Shi</maintainer>
     <license>BSD</license>
 
+    <buildtool_depend version_gte="0.5.68">catkin</buildtool_depend>
+
     <build_depend>roscpp</build_depend>
     <build_depend>cv_bridge</build_depend>
     <build_depend>message_filters</build_depend>

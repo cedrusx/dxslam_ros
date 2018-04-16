@@ -45,6 +45,15 @@ set(ORB_SLAM2_LIBRARIES
 )
 message(STATUS "Found ORB_SLAM2: " ${ORB_SLAM2_TOP_DIR})
 
+add_definitions(-DORB_SLAM2_PATH='"${ORB_SLAM2_TOP_DIR}"')
+add_definitions(-DCONFIG_PATH='"${PROJECT_SOURCE_DIR}/config"')
+
+catkin_package(
+    CATKIN_DEPENDS
+        roscpp
+    DEPENDS Eigen
+)
+
 include_directories(
   ${catkin_INCLUDE_DIRS}
   ${ORB_SLAM2_TOP_DIR}
@@ -71,3 +80,8 @@ target_link_libraries(maslam
   ${LIBS}
 )
 
+install(
+    TARGETS
+        maslam
+    DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
+)

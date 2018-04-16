@@ -19,65 +19,76 @@
 #include <chrono>
 #include <fstream>
 #include <iostream>
+#include <memory>
 
 class Maslam
 {
 public:
-    Maslam(ORB_SLAM2::System* slam);
+    Maslam();
+
+    ~Maslam();
 
     void imageCallback(const sensor_msgs::ImageConstPtr& msgRGB, const sensor_msgs::ImageConstPtr& msgD);
 
     void publishPose(const geometry_msgs::PoseStamped &msg);
+
+    message_filters::Subscriber<sensor_msgs::Image> sub_image_, sub_depth_;
+    typedef message_filters::sync_policies::ApproximateTime<sensor_msgs::Image, sensor_msgs::Image> sync_policy;
+    message_filters::Synchronizer<sync_policy> image_sync_;
 
     ros::Publisher pub_pose_, pub_pc_, pub_pose_1_;
     tf::TransformListener tf_;
     tf::TransformBroadcaster tfB_;
 
 private:
-    ORB_SLAM2::System* slam_;
+    std::unique_ptr<ORB_SLAM2::System> slam_;
+    std::string p_image_topic_, p_depth_topic_, p_ref_frame_;
+    std::string p_orb_vocabulary_, p_orb_settings_;
 };
 
 int main(int argc, char **argv)
 {
     ros::init(argc, argv, "maslam");
-
-    if(argc != 3)
-    {
-        cerr << endl << "Usage: rosrun ORB_SLAM2 RGBD path_to_vocabulary path_to_settings" << endl;        
-        ros::shutdown();
-        return 1;
-    }    
-
-    // Create SLAM system. It initializes all system threads and gets ready to process frames.
-    ORB_SLAM2::System SLAM(argv[1], argv[2], ORB_SLAM2::System::RGBD, true);
-
-    Maslam maslam(&SLAM);
-
-    ros::NodeHandle nh;
-    ros::NodeHandle lnh("~");
-
-    maslam.pub_pc_ = lnh.advertise<sensor_msgs::PointCloud>("pointcloud", 1);
-    maslam.pub_pose_ = lnh.advertise<geometry_msgs::PoseStamped>("pose", 1);
-    maslam.pub_pose_1_ = lnh.advertise<geometry_msgs::PoseStamped>("pose1", 1);
-
-    message_filters::Subscriber<sensor_msgs::Image> rgb_sub(nh, "/camera/color/image_raw", 1);
-    message_filters::Subscriber<sensor_msgs::Image> depth_sub(nh, "camera/depth/image_rect_raw", 1);
-    typedef message_filters::sync_policies::ApproximateTime<sensor_msgs::Image, sensor_msgs::Image> sync_pol;
-    message_filters::Synchronizer<sync_pol> sync(sync_pol(10), rgb_sub, depth_sub);
-    sync.registerCallback(boost::bind(&Maslam::imageCallback, &maslam, _1, _2));
-
+    Maslam maslam;
     ros::spin();
-
-    // Stop all threads
-    SLAM.Shutdown();
-
-    // Save camera trajectory
-    SLAM.SaveKeyFrameTrajectoryTUM("KeyFrameTrajectory.txt");
-
     return 0;
 }
 
-Maslam::Maslam(ORB_SLAM2::System* slam) : slam_(slam) {}
+Maslam::Maslam() : image_sync_(sync_policy(10))
+{
+    ros::NodeHandle nh;
+    ros::NodeHandle pnh("~");
+
+    pnh.param("image_topic", p_image_topic_, std::string("camera/color/image_raw"));
+    pnh.param("depth_topic", p_depth_topic_, std::string("camera/depth/image_rect_raw"));
+    pnh.param("reference_frame", p_ref_frame_, std::string("vslam_origin"));
+
+    pnh.param("orb_vocabulary", p_orb_vocabulary_, std::string(ORB_SLAM2_PATH) + "/Vocabulary/ORBvoc.txt");
+    pnh.param("orb_settings", p_orb_settings_, std::string(CONFIG_PATH) + "/rs435.yaml");
+
+    std::cout << "ORB_SLAM2 vocabulary: " << p_orb_vocabulary_ << "\n";
+    std::cout << "ORB_SLAM2 settings: " << p_orb_settings_ << "\n";
+
+    // Create SLAM system. It initializes all system threads and gets ready to process frames.
+    slam_.reset(new ORB_SLAM2::System(p_orb_vocabulary_, p_orb_settings_, ORB_SLAM2::System::RGBD, true));
+
+    pub_pc_ = pnh.advertise<sensor_msgs::PointCloud>("pointcloud", 1);
+    pub_pose_ = pnh.advertise<geometry_msgs::PoseStamped>("pose", 1);
+    pub_pose_1_ = pnh.advertise<geometry_msgs::PoseStamped>("pose1", 1);
+
+    sub_image_.subscribe(nh, p_image_topic_, 1);
+    sub_depth_.subscribe(nh, p_depth_topic_, 1);
+    image_sync_.connectInput(sub_image_, sub_depth_);
+    image_sync_.registerCallback(boost::bind(&Maslam::imageCallback, this, _1, _2));
+}
+
+Maslam::~Maslam()
+{
+    slam_->Shutdown();
+
+    // Save camera trajectory
+    slam_->SaveKeyFrameTrajectoryTUM("KeyFrameTrajectory.txt");
+}
 
 void Maslam::imageCallback(const sensor_msgs::ImageConstPtr& msgRGB,const sensor_msgs::ImageConstPtr& msgD)
 {
@@ -118,7 +129,7 @@ void Maslam::imageCallback(const sensor_msgs::ImageConstPtr& msgRGB,const sensor
     Eigen::Quaterniond eigq(eigm);
 
     geometry_msgs::PoseStamped msg;
-    msg.header.frame_id = "map";
+    msg.header.frame_id = p_ref_frame_;
     msg.header.stamp = msgRGB->header.stamp;
     msg.pose.position.x = twc.at<float>(0);
     msg.pose.position.y = twc.at<float>(1);
@@ -159,7 +170,7 @@ void Maslam::imageCallback(const sensor_msgs::ImageConstPtr& msgRGB,const sensor
     tf::Quaternion q;
     rh_cameraPose.getRotation(q);
     geometry_msgs::PoseStamped p;
-    p.header.frame_id = "map";
+    p.header.frame_id = p_ref_frame_;
     p.pose.position.x = rh_cameraTranslation[0];
     p.pose.position.y = rh_cameraTranslation[1];
     p.pose.position.z = rh_cameraTranslation[2];
@@ -172,7 +183,7 @@ void Maslam::imageCallback(const sensor_msgs::ImageConstPtr& msgRGB,const sensor
 
     // POINT CLOUD
     sensor_msgs::PointCloud cloud;
-    cloud.header.frame_id = "map";
+    cloud.header.frame_id = p_ref_frame_;
     std::vector<geometry_msgs::Point32> geo_points;
     std::vector<ORB_SLAM2::MapPoint*> points = slam_->GetTrackedMapPoints();
     cout << points.size() << endl;
@@ -224,7 +235,7 @@ void Maslam::imageCallback(const sensor_msgs::ImageConstPtr& msgRGB,const sensor
     tf::Matrix3x3 globalRotation_rh = cameraRotation_rh * rotation270degXZ;
     tf::Vector3 globalTranslation_rh = cameraTranslation_rh * rotation270degXZ;
     tf::Transform transform = tf::Transform(globalRotation_rh, globalTranslation_rh);
-    tfB_.sendTransform(tf::StampedTransform(transform, ros::Time::now(), "map", "camera_pose"));
+    tfB_.sendTransform(tf::StampedTransform(transform, ros::Time::now(), p_ref_frame_, "camera_pose"));
 }
 
 
