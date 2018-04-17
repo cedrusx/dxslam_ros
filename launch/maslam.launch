@@ -9,7 +9,8 @@
     <param name="reference_frame" value="vslam_origin"/>
     <param name="pub_tf_parent_frame" value="map"/>
     <param name="pub_tf_child_frame" value="base_link"/>
+    <!--remap from="maslam/pose2d" to="/pose"/-->
   </node>
 
-  <node name="rviz" pkg="rviz" type="rviz" args="" />
+  <node name="rviz" pkg="rviz" type="rviz" args="-d $(find maslam)/launch/maslam.rviz" />
 </launch>

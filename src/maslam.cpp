@@ -30,13 +30,13 @@ public:
 
     void imageCallback(const sensor_msgs::ImageConstPtr& msgRGB, const sensor_msgs::ImageConstPtr& msgD);
 
-    void publishPose(const geometry_msgs::PoseStamped &msg);
+    void publishPose(const cv::Mat &Tcw, const std_msgs::Header &image_header);
 
     message_filters::Subscriber<sensor_msgs::Image> sub_image_, sub_depth_;
     typedef message_filters::sync_policies::ApproximateTime<sensor_msgs::Image, sensor_msgs::Image> sync_policy;
     message_filters::Synchronizer<sync_policy> image_sync_;
 
-    ros::Publisher pub_pose_, pub_pose2d_, pub_pc_, pub_pose_1_;
+    ros::Publisher pub_pose_, pub_pose2d_, pub_pc_;
     tf::TransformListener tf_listener_;
     tf::TransformBroadcaster tf_broadcaster_;
 
@@ -47,6 +47,7 @@ private:
     std::string p_image_topic_, p_depth_topic_;
     std::string p_ref_frame_, p_parent_frame_, p_child_frame_;
     std::string p_orb_vocabulary_, p_orb_settings_;
+    const double planar_tol_ = 0.1;
 };
 
 int main(int argc, char **argv)
@@ -82,7 +83,6 @@ Maslam::Maslam() : image_sync_(sync_policy(10))
     pub_pc_ = pnh.advertise<sensor_msgs::PointCloud>("pointcloud", 1);
     pub_pose_ = pnh.advertise<geometry_msgs::PoseStamped>("pose", 1);
     pub_pose2d_ = pnh.advertise<geometry_msgs::PoseStamped>("pose2d", 1);
-    pub_pose_1_ = pnh.advertise<geometry_msgs::PoseStamped>("pose1", 1);
 
     sub_image_.subscribe(nh, p_image_topic_, 1);
     sub_depth_.subscribe(nh, p_depth_topic_, 1);
@@ -128,7 +128,12 @@ void Maslam::imageCallback(const sensor_msgs::ImageConstPtr& msgRGB,const sensor
             return;
     }
 
-    // Publish pose
+    publishPose(Tcw, msgRGB->header);
+}
+
+void Maslam::publishPose(const cv::Mat &Tcw, const std_msgs::Header &image_header)
+{
+    // Publish 3D pose
     cv::Mat Rwc = Tcw.rowRange(0,3).colRange(0,3).t();
     cv::Mat twc = -Rwc*Tcw.rowRange(0,3).col(3);
     // x right, y down, z forward
@@ -138,7 +143,7 @@ void Maslam::imageCallback(const sensor_msgs::ImageConstPtr& msgRGB,const sensor
 
     geometry_msgs::PoseStamped msg;
     msg.header.frame_id = p_ref_frame_;
-    msg.header.stamp = msgRGB->header.stamp;
+    msg.header.stamp = image_header.stamp;
     msg.pose.position.x = twc.at<float>(0);
     msg.pose.position.y = twc.at<float>(1);
     msg.pose.position.z = twc.at<float>(2);
@@ -152,7 +157,7 @@ void Maslam::imageCallback(const sensor_msgs::ImageConstPtr& msgRGB,const sensor
     tf::Transform ref_to_image;
     tf::StampedTransform parent_to_ref, child_to_image;
     tf::poseMsgToTF(msg.pose, ref_to_image);
-    std::string image_frame = msgRGB->header.frame_id;
+    std::string image_frame = image_header.frame_id;
     std::string parent_frame = p_parent_frame_, child_frame = p_child_frame_;
     bool get_tf_succeed = true;
     if (p_parent_frame_.empty()) {
@@ -172,48 +177,35 @@ void Maslam::imageCallback(const sensor_msgs::ImageConstPtr& msgRGB,const sensor
         tf_broadcaster_.sendTransform(tf::StampedTransform(parent_to_child, msg.header.stamp, parent_frame, child_frame));
     }
 
-    cv::Mat pose = Tcw;
+    // Publish 2D pose
+    // 1. transform into the parent frame (usually "map")
+    geometry_msgs::PoseStamped pose2d;
+    tf_listener_.transformPose(parent_frame, msg, pose2d);
+    // 2. rotate from camera coordinate (right-down-forward) to ROS coordinate (forward-left-up)
+    tf::Quaternion q2d(pose2d.pose.orientation.x, pose2d.pose.orientation.y, pose2d.pose.orientation.z, pose2d.pose.orientation.w);
+    tf::Quaternion cam2map(0.5, -0.5, 0.5, 0.5);
+    q2d *= cam2map;
+    // 3. warn if the actual pose is not in the x-y plane
+    if (std::abs(pose2d.pose.position.z) > planar_tol_)
+        ROS_WARN("Non-planar position: (%lf, %lf, %lf)", pose2d.pose.position.x, pose2d.pose.position.y, pose2d.pose.position.z);
+    if (std::abs(q2d[0]) > planar_tol_ || std::abs(q2d[1]) > planar_tol_)
+        ROS_WARN("Non-planar orientation: (%lf, %lf, %lf, %lf)", q2d[0], q2d[1], q2d[2], q2d[3]);
+    // 4. make the pose strictly in the x-y plane and publish it
+    double norm_factor = 1. / std::sqrt(q2d[2] * q2d[2] + q2d[3] * q2d[3]);
+    pose2d.pose.position.z = 0;
+    pose2d.pose.orientation.x = 0;
+    pose2d.pose.orientation.y = 0;
+    pose2d.pose.orientation.z = q2d[2] * norm_factor;
+    pose2d.pose.orientation.w = q2d[3] * norm_factor;
+    pub_pose2d_.publish(pose2d);
 
-    // CAMERA POSE
-
-    if (pose.empty()) {
-            return;
-    }
-    // transform into right handed camera frame
-    tf::Matrix3x3 rh_cameraPose(  - pose.at<float>(0,0),   pose.at<float>(0,1),   pose.at<float>(0,2),
-                                  - pose.at<float>(1,0),   pose.at<float>(1,1),   pose.at<float>(1,2),
-                                    pose.at<float>(2,0), - pose.at<float>(2,1), - pose.at<float>(2,2));
-
-    tf::Vector3 rh_cameraTranslation( pose.at<float>(0,3),pose.at<float>(1,3), - pose.at<float>(2,3) );
-    //std::cout << Tcw << std::endl;
-
-    //rotate 270deg about z and 270deg about x
-    tf::Matrix3x3 rotation270degZX( 0, 0, 1,
-                                   -1, 0, 0,
-                                    0,-1, 0);
-
-    //publish right handed, x forward, y right, z down (NED)
-
-    tf::Quaternion q;
-    rh_cameraPose.getRotation(q);
-    geometry_msgs::PoseStamped p;
-    p.header.frame_id = p_ref_frame_;
-    p.pose.position.x = rh_cameraTranslation[0];
-    p.pose.position.y = rh_cameraTranslation[1];
-    p.pose.position.z = rh_cameraTranslation[2];
-    p.pose.orientation.x = q[0];
-    p.pose.orientation.y = q[1];
-    p.pose.orientation.z = q[2];
-    p.pose.orientation.w = q[3];
-
-    pub_pose_1_.publish(p);
 
     // POINT CLOUD
     sensor_msgs::PointCloud cloud;
     cloud.header.frame_id = p_ref_frame_;
     std::vector<geometry_msgs::Point32> geo_points;
     std::vector<ORB_SLAM2::MapPoint*> points = slam_->GetTrackedMapPoints();
-    cout << points.size() << endl;
+    //cout << points.size() << endl;
     for (std::vector<int>::size_type i = 0; i != points.size(); i++) {
 	    if (points[i]) {
 		    cv::Mat coords = points[i]->GetWorldPos();
@@ -225,87 +217,9 @@ void Maslam::imageCallback(const sensor_msgs::ImageConstPtr& msgRGB,const sensor
 	    } else {
 	    }
     }
-    cout << geo_points.size() << endl;
+    //cout << geo_points.size() << endl;
     cloud.points = geo_points;
     pub_pc_.publish(cloud);
-
-
-
-
-    // global left handed coordinate system
-    static cv::Mat pose_prev = cv::Mat::eye(4,4, CV_32F);
-    static cv::Mat world_lh = cv::Mat::eye(4,4, CV_32F);
-    // matrix to flip signs of sinus in rotation matrix, not sure why we need to do that
-    static const cv::Mat flipSign = (cv::Mat_<float>(4,4) <<   1,-1,-1, 1,
-                                                               -1, 1,-1, 1,
-                                                               -1,-1, 1, 1,
-                                                                1, 1, 1, 1);
-
-    //prev_pose * T = pose
-    cv::Mat translation =  (pose * pose_prev.inv()).mul(flipSign);
-    world_lh = world_lh * translation;
-    pose_prev = pose.clone();
-
-
-    // transform into global right handed coordinate system, publish in ROS
-    tf::Matrix3x3 cameraRotation_rh(  - world_lh.at<float>(0,0),   world_lh.at<float>(0,1),   world_lh.at<float>(0,2),
-                                  - world_lh.at<float>(1,0),   world_lh.at<float>(1,1),   world_lh.at<float>(1,2),
-                                    world_lh.at<float>(2,0), - world_lh.at<float>(2,1), - world_lh.at<float>(2,2));
-
-    tf::Vector3 cameraTranslation_rh( world_lh.at<float>(0,3),world_lh.at<float>(1,3), - world_lh.at<float>(2,3) );
-
-    //rotate 270deg about x and 270deg about x to get ENU: x forward, y left, z up
-    const tf::Matrix3x3 rotation270degXZ(   0, 1, 0,
-                                            0, 0, 1,
-                                            1, 0, 0);
-
-    tf::Matrix3x3 globalRotation_rh = cameraRotation_rh * rotation270degXZ;
-    tf::Vector3 globalTranslation_rh = cameraTranslation_rh * rotation270degXZ;
-    tf::Transform transform = tf::Transform(globalRotation_rh, globalTranslation_rh);
-    tf_broadcaster_.sendTransform(tf::StampedTransform(transform, ros::Time::now(), p_ref_frame_, "camera_pose"));
-}
-
-
-void Maslam::publishPose(const geometry_msgs::PoseStamped &msg)
-{
-/*
-    const Eigen::Vector3f &pose = msg->pose;
-    poseMsgPub_.header.stamp = lastScanTime_;
-    poseMsgPub_.pose.position.x = pose.x();
-    poseMsgPub_.pose.position.y = pose.y();
-    poseMsgPub_.pose.orientation.w = cos(pose.z() * 0.5f);
-    poseMsgPub_.pose.orientation.z = sin(pose.z() * 0.5f);*/
-    pub_pose_1_.publish(msg);
-
-/*
-    poseWithCovMsgPub_.header.stamp = lastScanTime_;
-    poseWithCovMsgPub_.pose.pose = poseMsgPub_.pose;
-    poseWithCovMsgPub_.pose.covariance[0] = msg->confidence;
-    poseUpdatePublisher_.publish(poseWithCovMsgPub_);
-*/
-/*
-    tf::Transform map_to_pose;
-    tf::poseMsgToTF(msg.pose, map_to_pose);
-    if (p_pub_map_odom_transform_)
-    {
-        tf::StampedTransform odom_to_base;
-        try
-        {
-            tf_.waitForTransform(p_odom_frame_, p_base_frame_, msg.header.stamp, ros::Duration(0.5));
-            tf_.lookupTransform(p_odom_frame_, p_base_frame_, msg.header.stamp, odom_to_base);
-        }
-        catch(tf::TransformException e)
-        {
-            ROS_ERROR("Transform failed during publishing of map_odom transform: %s",e.what());
-            odom_to_base.setIdentity();
-        }
-        tf::Transform map_to_odom = tf::Transform(map_to_pose * odom_to_base.inverse());
-        tfB_.sendTransform(tf::StampedTransform(map_to_odom, msg.header.stamp, p_map_frame_, p_odom_frame_));
-    }
-
-    if (p_pub_map_scanmatch_transform_){
-        tfB_.sendTransform(tf::StampedTransform(map_to_pose, msg.header.stamp, p_map_frame_, p_scanmatch_frame_));
-    }*/
 }
 
 bool Maslam::getTransform(tf::StampedTransform &transform, std::string from, std::string to, ros::Time stamp)
