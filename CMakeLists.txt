@@ -32,21 +32,35 @@ find_package(Pangolin REQUIRED)
 ##   message(FATAL_ERROR "ORB_SLAM2 not found.")
 #endif()
 
-set(ORB_SLAM2_SEARCH_PATH "${CMAKE_SOURCE_DIR}/../../../")
+if(EXISTS ${CMAKE_SOURCE_DIR}/maslam) # catkin_make
+  set(MASLAM_DIR ${CMAKE_SOURCE_DIR}/maslam)
+else() #catkin build
+  set(MASLAM_DIR ${CMAKE_SOURCE_DIR})
+endif()
+set(ORB_SLAM2_SEARCH_PATH "${MASLAM_DIR}/../../../../")
 find_path(ORB_SLAM2_DIR
   ORB_SLAM2/include/System.h
   ${ORB_SLAM2_SEARCH_PATH}
   )
 set(ORB_SLAM2_TOP_DIR ${ORB_SLAM2_DIR}/ORB_SLAM2/)
+if(NOT ORB_SLAM2_DIR)
+  message(FATAL_ERROR "ORB_SLAM2 not found under " ${ORB_SLAM2_SEARCH_PATH})
+else()
+  message(STATUS "Found ORB_SLAM2: " ${ORB_SLAM2_TOP_DIR})
+endif()
 set(ORB_SLAM2_LIBRARIES
   ${ORB_SLAM2_TOP_DIR}/Thirdparty/DBoW2/lib/libDBoW2.so
   ${ORB_SLAM2_TOP_DIR}/Thirdparty/g2o/lib/libg2o.so
   ${ORB_SLAM2_TOP_DIR}/lib/libORB_SLAM2.so
 )
-message(STATUS "Found ORB_SLAM2: " ${ORB_SLAM2_TOP_DIR})
 
-add_definitions(-DORB_SLAM2_PATH='"${ORB_SLAM2_TOP_DIR}"')
-add_definitions(-DCONFIG_PATH='"${PROJECT_SOURCE_DIR}/config"')
+if(EXISTS ${CMAKE_SOURCE_DIR}/maslam) # catkin_make
+  add_definitions(-DORB_SLAM2_PATH='"${ORB_SLAM2_TOP_DIR}"')
+  add_definitions(-DCONFIG_PATH='"${PROJECT_SOURCE_DIR}/config"')
+else() #catkin build
+  add_definitions(-DORB_SLAM2_PATH="${ORB_SLAM2_TOP_DIR}")
+  add_definitions(-DCONFIG_PATH="${PROJECT_SOURCE_DIR}/config")
+endif()
 
 catkin_package(
     CATKIN_DEPENDS
