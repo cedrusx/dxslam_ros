@@ -28,9 +28,12 @@ public:
 
     ~Maslam();
 
+private:
     void imageCallback(const sensor_msgs::ImageConstPtr& msgRGB, const sensor_msgs::ImageConstPtr& msgD);
 
     void publishPose(const cv::Mat &Tcw, const std_msgs::Header &image_header);
+
+    bool getTransform(tf::StampedTransform &transform, std::string from, std::string to, ros::Time stamp);
 
     message_filters::Subscriber<sensor_msgs::Image> sub_image_, sub_depth_;
     typedef message_filters::sync_policies::ApproximateTime<sensor_msgs::Image, sensor_msgs::Image> sync_policy;
@@ -39,9 +42,6 @@ public:
     ros::Publisher pub_pose_, pub_pose2d_, pub_pc_;
     tf::TransformListener tf_listener_;
     tf::TransformBroadcaster tf_broadcaster_;
-
-private:
-    bool getTransform(tf::StampedTransform &transform, std::string from, std::string to, ros::Time stamp);
 
     std::unique_ptr<ORB_SLAM2::System> slam_;
     std::string p_image_topic_, p_depth_topic_;
