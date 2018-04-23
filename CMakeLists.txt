@@ -37,15 +37,15 @@ if(EXISTS ${CMAKE_SOURCE_DIR}/maslam) # catkin_make
 else() #catkin build
   set(MASLAM_DIR ${CMAKE_SOURCE_DIR})
 endif()
-set(ORB_SLAM2_SEARCH_PATH "${MASLAM_DIR}/../../../../")
+set(ORB_SLAM2_SEARCH_PATH "${MASLAM_DIR}/../../../;${MASLAM_DIR}/../../../../")
 find_path(ORB_SLAM2_DIR
   ORB_SLAM2/include/System.h
   ${ORB_SLAM2_SEARCH_PATH}
   )
-set(ORB_SLAM2_TOP_DIR ${ORB_SLAM2_DIR}/ORB_SLAM2/)
 if(NOT ORB_SLAM2_DIR)
   message(FATAL_ERROR "ORB_SLAM2 not found under " ${ORB_SLAM2_SEARCH_PATH})
 else()
+  set(ORB_SLAM2_TOP_DIR ${ORB_SLAM2_DIR}/ORB_SLAM2/)
   message(STATUS "Found ORB_SLAM2: " ${ORB_SLAM2_TOP_DIR})
 endif()
 set(ORB_SLAM2_LIBRARIES
