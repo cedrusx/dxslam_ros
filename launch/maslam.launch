@@ -22,6 +22,7 @@
     <remap from="cloud_in" to="/camera/depth/color/points"/>
     <param name="occupancy_min_z" value="$(arg cam_to_floor)"/>
     <param name="occupancy_max_z" value="$(arg cam_to_top)"/>
+    <param name="camera_min_z" value="0.1"/>
   </node>
 
   <include file="$(find realsense_ros_camera)/launch/rs_aligned_depth.launch" if="$(arg realsense)">
