@@ -15,6 +15,7 @@
 #include <tf/transform_broadcaster.h>
 #include <tf/transform_listener.h>
 #include "hfnet_msgs/Hfnet.h"
+#include "block_queue.hpp"
 #include <algorithm>
 #include <chrono>
 #include <fstream>
@@ -28,24 +29,40 @@ public:
 
     ~Maslam();
 
+    void mainLoop();
+
 private:
-    void imageCallback(const sensor_msgs::ImageConstPtr& msgRGB, const sensor_msgs::ImageConstPtr& msgD, const hfnet_msgs::HfnetConstPtr& msgHf);
+    struct RGBDF {
+        std_msgs::Header header;
+        cv::Mat color;
+        cv::Mat depth;
+        std::vector<cv::KeyPoint> keypoints;
+        cv::Mat local_desc;
+        cv::Mat global_desc;
+    };
+
+    void imageCallback(const sensor_msgs::ImageConstPtr& msgRGB, const sensor_msgs::ImageConstPtr& msgD);
+
+    void featureCallback(const hfnet_msgs::HfnetConstPtr& msg);
 
     void publishPose(const cv::Mat &Tcw, const std_msgs::Header &image_header);
 
     bool getTransform(tf::StampedTransform &transform, std::string from, std::string to, ros::Time stamp);
 
     message_filters::Subscriber<sensor_msgs::Image> sub_image_, sub_depth_;
-    message_filters::Subscriber<hfnet_msgs::Hfnet> sub_hfnet_;
-    typedef message_filters::sync_policies::ApproximateTime<sensor_msgs::Image, sensor_msgs::Image, hfnet_msgs::Hfnet> sync_policy;
+    ros::Subscriber sub_feature_;
+    typedef message_filters::sync_policies::ApproximateTime<sensor_msgs::Image, sensor_msgs::Image> sync_policy;
     message_filters::Synchronizer<sync_policy> image_sync_;
+
+    std::queue<RGBDF> image_queue_;
+    BlockingQueue<RGBDF> work_queue_;
 
     ros::Publisher pub_pose_, pub_pose2d_, pub_pc_;
     tf::TransformListener tf_listener_;
     tf::TransformBroadcaster tf_broadcaster_;
 
     std::unique_ptr<ORB_SLAM2::System> slam_;
-    std::string p_image_topic_, p_depth_topic_;
+    std::string p_image_topic_, p_depth_topic_, p_feature_topic_;
     std::string p_ref_frame_, p_parent_frame_, p_child_frame_;
     std::string p_orb_vocabulary_, p_orb_settings_;
     const double planar_tol_ = 0.1;
@@ -55,7 +72,9 @@ int main(int argc, char **argv)
 {
     ros::init(argc, argv, "maslam");
     Maslam maslam;
-    ros::spin();
+    ros::AsyncSpinner spinner(1);
+    spinner.start();
+    maslam.mainLoop();
     return 0;
 }
 
@@ -66,6 +85,9 @@ Maslam::Maslam() : image_sync_(sync_policy(10))
 
     pnh.param("image_topic", p_image_topic_, std::string("/camera/color/image_raw"));
     pnh.param("depth_topic", p_depth_topic_, std::string("/camera/depth/image_raw"));
+    pnh.param("feature_topic", p_feature_topic_, std::string("/features"));
+    int p_queue_size;
+    pnh.param("queue_size", p_queue_size, 10);
     // Set ROS frames between which we should publish tf. Default: reference frame -> RGB image frame
     pnh.param("pub_tf_parent_frame", p_parent_frame_, std::string(""));
     pnh.param("pub_tf_child_frame", p_child_frame_, std::string(""));
@@ -83,11 +105,12 @@ Maslam::Maslam() : image_sync_(sync_policy(10))
     pub_pose_ = pnh.advertise<geometry_msgs::PoseStamped>("pose", 1);
     pub_pose2d_ = pnh.advertise<geometry_msgs::PoseStamped>("pose2d", 1);
 
+    work_queue_.set_queue_limit(p_queue_size);
     sub_image_.subscribe(nh, p_image_topic_, 1000);
     sub_depth_.subscribe(nh, p_depth_topic_, 1000);
-    sub_hfnet_.subscribe(nh, "/features", 1000);
-    image_sync_.connectInput(sub_image_, sub_depth_,sub_hfnet_ );
-    image_sync_.registerCallback(boost::bind(&Maslam::imageCallback, this, _1, _2, _3));
+    sub_feature_ = nh.subscribe(p_feature_topic_, 10, &Maslam::featureCallback, this);
+    image_sync_.connectInput(sub_image_, sub_depth_);
+    image_sync_.registerCallback(boost::bind(&Maslam::imageCallback, this, _1, _2));
 }
 
 Maslam::~Maslam()
@@ -98,34 +121,8 @@ Maslam::~Maslam()
     slam_->SaveKeyFrameTrajectoryTUM("KeyFrameTrajectory.txt");
 }
 
-void Maslam::imageCallback(const sensor_msgs::ImageConstPtr& msgRGB,const sensor_msgs::ImageConstPtr& msgD, const hfnet_msgs::HfnetConstPtr& msgHf)
+void Maslam::imageCallback(const sensor_msgs::ImageConstPtr& msgRGB, const sensor_msgs::ImageConstPtr& msgD)
 {
-    printf("got images\n");
-    // Copy the ros image message to cv::Mat.
-    std::vector<cv::KeyPoint> keypoints;
-    // cv_bridge::CvImagePtr cv_ptr = cv_bridge::toCvCopy(msgHf->image, sensor_msgs::image_encodings::BGR8);
-    for (auto it = msgHf->local_points.begin(); it != msgHf->local_points.end(); ++it) {
-        cv::KeyPoint kp;
-        kp.pt.x = it->x;
-        kp.pt.y = it->y;
-        kp.octave = 0;
-        keypoints.push_back(kp);
-    }
-    cv::Mat local_desc;
-    cv::Mat global_desc;
-    local_desc.create(keypoints.size(), 256, CV_32F);
-    int n_rows = local_desc.rows;
-    int n_cols = local_desc.cols;
-    for (int j = 0; j<n_rows; j++)
-    {
-        uchar* data = local_desc.ptr<uchar>(j);
-        auto data_ = msgHf->local_desc[j];
-        for (int i = 0; i<n_cols; i++)
-        {
-            data[i] = data_.data[i];
-        }
-    }
-    global_desc = cv::Mat(msgHf->global_desc.data,CV_32F);
     cv_bridge::CvImageConstPtr cv_ptrRGB;
     try
     {
@@ -147,13 +144,70 @@ void Maslam::imageCallback(const sensor_msgs::ImageConstPtr& msgRGB,const sensor
         ROS_ERROR("cv_bridge exception: %s", e.what());
         return;
     }
+    RGBDF data;
+    data.header = msgRGB->header;
+    data.color = cv_ptrRGB->image;
+    data.depth = cv_ptrD->image;
+    image_queue_.push(data);
+}
 
-    cv::Mat Tcw = slam_->TrackRGBD(cv_ptrRGB->image,cv_ptrD->image,cv_ptrRGB->header.stamp.toSec(), keypoints, local_desc, global_desc);
-    if (Tcw.empty()) {
-            return;
+void Maslam::featureCallback(const hfnet_msgs::HfnetConstPtr& msg)
+{
+    // find the image with exact match of stamp
+    RGBDF image;
+    bool found = false;
+    while (!image_queue_.empty()) {
+        image = image_queue_.front();
+        image_queue_.pop();
+        if (image.header.stamp == msg->header.stamp) {
+            found = true;
+            break;
+        }
+        if (image.header.stamp > msg->header.stamp) break;
+    }
+    if (!found) {
+        ROS_WARN("Could not find matched image for feature at %lf", msg->header.stamp.toSec());
+        return;
     }
 
-    publishPose(Tcw, msgRGB->header);
+    // Copy the ros image message to cv::Mat.
+    for (auto p: msg->local_points) {
+        cv::KeyPoint kp;
+        kp.pt.x = p.x;
+        kp.pt.y = p.y;
+        kp.octave = 0;
+        image.keypoints.push_back(kp);
+    }
+    image.local_desc.create(image.keypoints.size(), 256, CV_32F);
+    int n_rows = image.local_desc.rows;
+    int n_cols = image.local_desc.cols;
+    for (int j = 0; j<n_rows; j++)
+    {
+        uchar* data = image.local_desc.ptr<uchar>(j);
+        auto data_ = msg->local_desc[j];
+        for (int i = 0; i<n_cols; i++)
+        {
+            data[i] = data_.data[i];
+        }
+    }
+    image.global_desc = cv::Mat(msg->global_desc.data, CV_32F);
+
+    // invoke the worker
+    work_queue_.push(image);
+}
+
+void Maslam::mainLoop()
+{
+    while (ros::ok()) {
+        RGBDF image;
+        if (!work_queue_.pop(image)) break;
+        cv::Mat Tcw = slam_->TrackRGBD(image.color, image.depth, image.header.stamp.toSec(), image.keypoints, image.local_desc, image.global_desc);
+        if (Tcw.empty()) {
+            ROS_ERROR("Empty pose result!");
+            continue;
+        }
+        publishPose(Tcw, image.header);
+    }
 }
 
 void Maslam::publishPose(const cv::Mat &Tcw, const std_msgs::Header &image_header)

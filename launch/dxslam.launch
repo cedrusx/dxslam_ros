@@ -1,0 +1,23 @@
+<launch>
+  <!-- set realsense:=true to launch realsense node -->
+  <!-- distance from camera to the floor and the top of robot, to bound observed obstacles when constructing occupancy map -->
+  <arg name="gdb" default="false"/>
+
+  <arg name="launch-prefix" default="gdb -ex run -args" if="$(arg gdb)"/>
+  <arg name="launch-prefix" default="" unless="$(arg gdb)"/>
+
+  <node name="map_vslam_tf" pkg="tf" type="static_transform_publisher" args="0 0 0 -1.5708 0 -1.5708 /map /vslam_origin 100" />
+
+  <node name="base_camera_tf" pkg="tf" type="static_transform_publisher" args="0 0 0 0 0 0 /base_link /camera_link 100" />
+
+  <node pkg="maslam" type="maslam" name="maslam" output="screen" launch-prefix="$(arg launch-prefix)">
+    <param name="reference_frame" value="vslam_origin"/>
+    <param name="pub_tf_parent_frame" value="vslam_origin"/>
+    <param name="pub_tf_child_frame" value="base_link"/>
+    <param name="image_topic" value="/d400/color/image_raw"/>
+    <param name="depth_topic" value="/d400/aligned_depth_to_color/image_raw"/>
+    <!--remap from="maslam/pose2d" to="/pose"/-->
+  </node>
+
+  <node name="rviz" pkg="rviz" type="rviz" args="-d $(find maslam)/launch/maslam.rviz" />
+</launch>
