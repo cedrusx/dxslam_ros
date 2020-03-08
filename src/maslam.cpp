@@ -14,7 +14,7 @@
 #include <tf/transform_datatypes.h>
 #include <tf/transform_broadcaster.h>
 #include <tf/transform_listener.h>
-
+#include "hfnet_msgs/Hfnet.h"
 #include <algorithm>
 #include <chrono>
 #include <fstream>
@@ -29,14 +29,15 @@ public:
     ~Maslam();
 
 private:
-    void imageCallback(const sensor_msgs::ImageConstPtr& msgRGB, const sensor_msgs::ImageConstPtr& msgD);
+    void imageCallback(const sensor_msgs::ImageConstPtr& msgRGB, const sensor_msgs::ImageConstPtr& msgD, const hfnet_msgs::HfnetConstPtr& msgHf);
 
     void publishPose(const cv::Mat &Tcw, const std_msgs::Header &image_header);
 
     bool getTransform(tf::StampedTransform &transform, std::string from, std::string to, ros::Time stamp);
 
     message_filters::Subscriber<sensor_msgs::Image> sub_image_, sub_depth_;
-    typedef message_filters::sync_policies::ApproximateTime<sensor_msgs::Image, sensor_msgs::Image> sync_policy;
+    message_filters::Subscriber<hfnet_msgs::Hfnet> sub_hfnet_;
+    typedef message_filters::sync_policies::ApproximateTime<sensor_msgs::Image, sensor_msgs::Image, hfnet_msgs::Hfnet> sync_policy;
     message_filters::Synchronizer<sync_policy> image_sync_;
 
     ros::Publisher pub_pose_, pub_pose2d_, pub_pc_;
@@ -63,20 +64,18 @@ Maslam::Maslam() : image_sync_(sync_policy(10))
     ros::NodeHandle nh;
     ros::NodeHandle pnh("~");
 
-    pnh.param("image_topic", p_image_topic_, std::string("camera/color/image_raw"));
-    pnh.param("depth_topic", p_depth_topic_, std::string("camera/depth/image_rect_raw"));
-
+    pnh.param("image_topic", p_image_topic_, std::string("/camera/color/image_raw"));
+    pnh.param("depth_topic", p_depth_topic_, std::string("/camera/depth/image_raw"));
     // Set ROS frames between which we should publish tf. Default: reference frame -> RGB image frame
     pnh.param("pub_tf_parent_frame", p_parent_frame_, std::string(""));
     pnh.param("pub_tf_child_frame", p_child_frame_, std::string(""));
     pnh.param("reference_frame", p_ref_frame_, std::string("vslam_origin"));
 
-    pnh.param("orb_vocabulary", p_orb_vocabulary_, std::string(ORB_SLAM2_PATH) + "/Vocabulary/ORBvoc.txt");
+    pnh.param("orb_vocabulary", p_orb_vocabulary_, std::string(ORB_SLAM2_PATH) + "/Vocabulary/super.fbow");
     pnh.param("orb_settings", p_orb_settings_, std::string(CONFIG_PATH) + "/rs435.yaml");
 
     std::cout << "ORB_SLAM2 vocabulary: " << p_orb_vocabulary_ << "\n";
     std::cout << "ORB_SLAM2 settings: " << p_orb_settings_ << "\n";
-
     // Create SLAM system. It initializes all system threads and gets ready to process frames.
     slam_.reset(new ORB_SLAM2::System(p_orb_vocabulary_, p_orb_settings_, ORB_SLAM2::System::RGBD, true));
 
@@ -84,10 +83,11 @@ Maslam::Maslam() : image_sync_(sync_policy(10))
     pub_pose_ = pnh.advertise<geometry_msgs::PoseStamped>("pose", 1);
     pub_pose2d_ = pnh.advertise<geometry_msgs::PoseStamped>("pose2d", 1);
 
-    sub_image_.subscribe(nh, p_image_topic_, 1);
-    sub_depth_.subscribe(nh, p_depth_topic_, 1);
-    image_sync_.connectInput(sub_image_, sub_depth_);
-    image_sync_.registerCallback(boost::bind(&Maslam::imageCallback, this, _1, _2));
+    sub_image_.subscribe(nh, p_image_topic_, 1000);
+    sub_depth_.subscribe(nh, p_depth_topic_, 1000);
+    sub_hfnet_.subscribe(nh, "/features", 1000);
+    image_sync_.connectInput(sub_image_, sub_depth_,sub_hfnet_ );
+    image_sync_.registerCallback(boost::bind(&Maslam::imageCallback, this, _1, _2, _3));
 }
 
 Maslam::~Maslam()
@@ -98,13 +98,38 @@ Maslam::~Maslam()
     slam_->SaveKeyFrameTrajectoryTUM("KeyFrameTrajectory.txt");
 }
 
-void Maslam::imageCallback(const sensor_msgs::ImageConstPtr& msgRGB,const sensor_msgs::ImageConstPtr& msgD)
+void Maslam::imageCallback(const sensor_msgs::ImageConstPtr& msgRGB,const sensor_msgs::ImageConstPtr& msgD, const hfnet_msgs::HfnetConstPtr& msgHf)
 {
+    printf("got images\n");
     // Copy the ros image message to cv::Mat.
+    std::vector<cv::KeyPoint> keypoints;
+    // cv_bridge::CvImagePtr cv_ptr = cv_bridge::toCvCopy(msgHf->image, sensor_msgs::image_encodings::BGR8);
+    for (auto it = msgHf->local_points.begin(); it != msgHf->local_points.end(); ++it) {
+        cv::KeyPoint kp;
+        kp.pt.x = it->x;
+        kp.pt.y = it->y;
+        kp.octave = 0;
+        keypoints.push_back(kp);
+    }
+    cv::Mat local_desc;
+    cv::Mat global_desc;
+    local_desc.create(keypoints.size(), 256, CV_32F);
+    int n_rows = local_desc.rows;
+    int n_cols = local_desc.cols;
+    for (int j = 0; j<n_rows; j++)
+    {
+        uchar* data = local_desc.ptr<uchar>(j);
+        auto data_ = msgHf->local_desc[j];
+        for (int i = 0; i<n_cols; i++)
+        {
+            data[i] = data_.data[i];
+        }
+    }
+    global_desc = cv::Mat(msgHf->global_desc.data,CV_32F);
     cv_bridge::CvImageConstPtr cv_ptrRGB;
     try
     {
-        cv_ptrRGB = cv_bridge::toCvShare(msgRGB);
+        cv_ptrRGB = cv_bridge::toCvCopy(msgRGB,sensor_msgs::image_encodings::BGR8);
     }
     catch (cv_bridge::Exception& e)
     {
@@ -115,7 +140,7 @@ void Maslam::imageCallback(const sensor_msgs::ImageConstPtr& msgRGB,const sensor
     cv_bridge::CvImageConstPtr cv_ptrD;
     try
     {
-        cv_ptrD = cv_bridge::toCvShare(msgD);
+        cv_ptrD = cv_bridge::toCvCopy(msgD, sensor_msgs::image_encodings::TYPE_16UC1);
     }
     catch (cv_bridge::Exception& e)
     {
@@ -123,7 +148,7 @@ void Maslam::imageCallback(const sensor_msgs::ImageConstPtr& msgRGB,const sensor
         return;
     }
 
-    cv::Mat Tcw = slam_->TrackRGBD(cv_ptrRGB->image,cv_ptrD->image,cv_ptrRGB->header.stamp.toSec());
+    cv::Mat Tcw = slam_->TrackRGBD(cv_ptrRGB->image,cv_ptrD->image,cv_ptrRGB->header.stamp.toSec(), keypoints, local_desc, global_desc);
     if (Tcw.empty()) {
             return;
     }

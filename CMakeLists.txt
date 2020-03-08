@@ -7,6 +7,7 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -O3 -march=native -std=c++11")
 find_package(catkin REQUIRED
   COMPONENTS
     roscpp
+    hfnet_msgs
     cv_bridge
     message_filters
     tf
@@ -37,7 +38,7 @@ if(EXISTS ${CMAKE_SOURCE_DIR}/maslam) # catkin_make
 else() #catkin build
   set(MASLAM_DIR ${CMAKE_SOURCE_DIR})
 endif()
-set(ORB_SLAM2_SEARCH_PATH "${MASLAM_DIR}/../../../;${MASLAM_DIR}/../../../../")
+set(ORB_SLAM2_SEARCH_PATH "${MASLAM_DIR}/../../;${MASLAM_DIR}/../../../;${MASLAM_DIR}/../../../../")
 find_path(ORB_SLAM2_DIR
   ORB_SLAM2/include/System.h
   ${ORB_SLAM2_SEARCH_PATH}
@@ -65,10 +66,12 @@ endif()
 catkin_package(
     CATKIN_DEPENDS
         roscpp
+        hfnet_msgs
     DEPENDS Eigen
 )
 
 include_directories(
+  ${ORB_SLAM2_TOP_DIR}/Thirdparty/fbow/src
   ${catkin_INCLUDE_DIRS}
   ${ORB_SLAM2_TOP_DIR}
   ${ORB_SLAM2_TOP_DIR}/include
