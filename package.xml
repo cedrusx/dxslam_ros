@@ -1,9 +1,9 @@
 <package>
-    <name>maslam</name>
+    <name>dxslam_ros</name>
     <version>0.0.1</version>
     <description>
 
-        This package is an ROS wrapper of ORB_SLAM2.
+        This package is an ROS wrapper of DXSLAM.
 
     </description>
     <author> Xuesong Shi </author>
@@ -17,7 +17,7 @@
     <build_depend>cv_bridge</build_depend>
     <build_depend>message_filters</build_depend>
     <build_depend>std_msgs</build_depend>
-    <build_depend>hfnet_msgs</build_depend>
+    <build_depend>image_feature_msgs</build_depend>
     <build_depend>geometry_msgs</build_depend>
     <build_depend>sensor_msgs</build_depend>
     <build_depend>nav_msgs</build_depend>
@@ -26,7 +26,7 @@
 
     <run_depend>roscpp</run_depend>
     <run_depend>cv_bridge</run_depend>
-    <run_depend>hfnet_msgs</run_depend>
+    <run_depend>image_feature_msgs</run_depend>
     <run_depend>message_filters</run_depend>
     <run_depend>std_msgs</run_depend>
     <run_depend>geometry_msgs</run_depend>

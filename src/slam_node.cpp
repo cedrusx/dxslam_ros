@@ -1,4 +1,4 @@
-#include <System.h> // ORB_SLAM2
+#include <System.h>
 #include <Converter.h>
 
 #include <ros/ros.h>
@@ -14,7 +14,7 @@
 #include <tf/transform_datatypes.h>
 #include <tf/transform_broadcaster.h>
 #include <tf/transform_listener.h>
-#include "hfnet_msgs/Hfnet.h"
+#include <image_feature_msgs/ImageFeatures.h>
 #include "block_queue.hpp"
 #include <algorithm>
 #include <chrono>
@@ -22,12 +22,12 @@
 #include <iostream>
 #include <memory>
 
-class Maslam
+class SLAMNode
 {
 public:
-    Maslam();
+    SLAMNode();
 
-    ~Maslam();
+    ~SLAMNode();
 
     void mainLoop();
 
@@ -43,7 +43,7 @@ private:
 
     void imageCallback(const sensor_msgs::ImageConstPtr& msgRGB, const sensor_msgs::ImageConstPtr& msgD);
 
-    void featureCallback(const hfnet_msgs::HfnetConstPtr& msg);
+    void featureCallback(const image_feature_msgs::ImageFeaturesConstPtr& msg);
 
     void publishPose(const cv::Mat &Tcw, const std_msgs::Header &image_header);
 
@@ -61,31 +61,31 @@ private:
     tf::TransformListener tf_listener_;
     tf::TransformBroadcaster tf_broadcaster_;
 
-    std::unique_ptr<ORB_SLAM2::System> slam_;
+    std::unique_ptr<DXSLAM::System> slam_;
     std::string p_image_topic_, p_depth_topic_, p_feature_topic_;
     std::string p_ref_frame_, p_parent_frame_, p_child_frame_;
-    std::string p_orb_vocabulary_, p_orb_settings_;
+    std::string p_vocabulary_, p_slam_settings_;
     const double planar_tol_ = 0.1;
 };
 
 int main(int argc, char **argv)
 {
-    ros::init(argc, argv, "maslam");
-    Maslam maslam;
+    ros::init(argc, argv, "dxslam");
+    SLAMNode node;
     ros::AsyncSpinner spinner(1);
     spinner.start();
-    maslam.mainLoop();
+    node.mainLoop();
     return 0;
 }
 
-Maslam::Maslam() : image_sync_(sync_policy(10))
+SLAMNode::SLAMNode() : image_sync_(sync_policy(10))
 {
     ros::NodeHandle nh;
     ros::NodeHandle pnh("~");
 
     pnh.param("image_topic", p_image_topic_, std::string("/camera/color/image_raw"));
     pnh.param("depth_topic", p_depth_topic_, std::string("/camera/depth/image_raw"));
-    pnh.param("feature_topic", p_feature_topic_, std::string("/features"));
+    pnh.param("feature_topic", p_feature_topic_, std::string("/camera/color/features"));
     int p_queue_size;
     pnh.param("queue_size", p_queue_size, 10);
     // Set ROS frames between which we should publish tf. Default: reference frame -> RGB image frame
@@ -93,13 +93,13 @@ Maslam::Maslam() : image_sync_(sync_policy(10))
     pnh.param("pub_tf_child_frame", p_child_frame_, std::string(""));
     pnh.param("reference_frame", p_ref_frame_, std::string("vslam_origin"));
 
-    pnh.param("orb_vocabulary", p_orb_vocabulary_, std::string(ORB_SLAM2_PATH) + "/Vocabulary/super.fbow");
-    pnh.param("orb_settings", p_orb_settings_, std::string(CONFIG_PATH) + "/rs435.yaml");
+    pnh.param("vocabulary", p_vocabulary_, std::string(DXSLAM_PATH) + "/Vocabulary/super.fbow");
+    pnh.param("slam_settings", p_slam_settings_, std::string(CONFIG_PATH) + "/rs435.yaml");
 
-    std::cout << "ORB_SLAM2 vocabulary: " << p_orb_vocabulary_ << "\n";
-    std::cout << "ORB_SLAM2 settings: " << p_orb_settings_ << "\n";
+    std::cout << "DXSLAM vocabulary: " << p_vocabulary_ << "\n";
+    std::cout << "DXSLAM settings: " << p_slam_settings_ << "\n";
     // Create SLAM system. It initializes all system threads and gets ready to process frames.
-    slam_.reset(new ORB_SLAM2::System(p_orb_vocabulary_, p_orb_settings_, ORB_SLAM2::System::RGBD, true));
+    slam_.reset(new DXSLAM::System(p_vocabulary_, p_slam_settings_, DXSLAM::System::RGBD, true));
 
     pub_pc_ = pnh.advertise<sensor_msgs::PointCloud>("pointcloud", 1);
     pub_pose_ = pnh.advertise<geometry_msgs::PoseStamped>("pose", 1);
@@ -108,20 +108,20 @@ Maslam::Maslam() : image_sync_(sync_policy(10))
     work_queue_.set_queue_limit(p_queue_size);
     sub_image_.subscribe(nh, p_image_topic_, 1000);
     sub_depth_.subscribe(nh, p_depth_topic_, 1000);
-    sub_feature_ = nh.subscribe(p_feature_topic_, 10, &Maslam::featureCallback, this);
+    sub_feature_ = nh.subscribe(p_feature_topic_, 10, &SLAMNode::featureCallback, this);
     image_sync_.connectInput(sub_image_, sub_depth_);
-    image_sync_.registerCallback(boost::bind(&Maslam::imageCallback, this, _1, _2));
+    image_sync_.registerCallback(boost::bind(&SLAMNode::imageCallback, this, _1, _2));
 }
 
-Maslam::~Maslam()
+SLAMNode::~SLAMNode()
 {
     slam_->Shutdown();
 
     // Save camera trajectory
-    slam_->SaveKeyFrameTrajectoryTUM("KeyFrameTrajectory.txt");
+    //slam_->SaveKeyFrameTrajectoryTUM("KeyFrameTrajectory.txt");
 }
 
-void Maslam::imageCallback(const sensor_msgs::ImageConstPtr& msgRGB, const sensor_msgs::ImageConstPtr& msgD)
+void SLAMNode::imageCallback(const sensor_msgs::ImageConstPtr& msgRGB, const sensor_msgs::ImageConstPtr& msgD)
 {
     cv_bridge::CvImageConstPtr cv_ptrRGB;
     try
@@ -151,7 +151,7 @@ void Maslam::imageCallback(const sensor_msgs::ImageConstPtr& msgRGB, const senso
     image_queue_.push(data);
 }
 
-void Maslam::featureCallback(const hfnet_msgs::HfnetConstPtr& msg)
+void SLAMNode::featureCallback(const image_feature_msgs::ImageFeaturesConstPtr& msg)
 {
     // find the image with exact match of stamp
     RGBDF image;
@@ -171,7 +171,7 @@ void Maslam::featureCallback(const hfnet_msgs::HfnetConstPtr& msg)
     }
 
     // Copy the ros image message to cv::Mat.
-    for (auto p: msg->local_points) {
+    for (auto p: msg->keypoints) {
         cv::KeyPoint kp;
         kp.pt.x = p.x;
         kp.pt.y = p.y;
@@ -181,22 +181,18 @@ void Maslam::featureCallback(const hfnet_msgs::HfnetConstPtr& msg)
     image.local_desc.create(image.keypoints.size(), 256, CV_32F);
     int n_rows = image.local_desc.rows;
     int n_cols = image.local_desc.cols;
-    for (int j = 0; j<n_rows; j++)
-    {
-        uchar* data = image.local_desc.ptr<uchar>(j);
-        auto data_ = msg->local_desc[j];
-        for (int i = 0; i<n_cols; i++)
-        {
-            data[i] = data_.data[i];
+    for (int j = 0; j < n_rows; j++) {
+        for (int i = 0; i < n_cols; i++) {
+            image.local_desc.at<float>(j, i) = msg->descriptors.data[j * n_cols + i];
         }
     }
-    image.global_desc = cv::Mat(msg->global_desc.data, CV_32F);
+    image.global_desc = cv::Mat(msg->global_descriptor, CV_32F);
 
     // invoke the worker
     work_queue_.push(image);
 }
 
-void Maslam::mainLoop()
+void SLAMNode::mainLoop()
 {
     while (ros::ok()) {
         RGBDF image;
@@ -210,14 +206,14 @@ void Maslam::mainLoop()
     }
 }
 
-void Maslam::publishPose(const cv::Mat &Tcw, const std_msgs::Header &image_header)
+void SLAMNode::publishPose(const cv::Mat &Tcw, const std_msgs::Header &image_header)
 {
     // Publish 3D pose
     cv::Mat Rwc = Tcw.rowRange(0,3).colRange(0,3).t();
     cv::Mat twc = -Rwc*Tcw.rowRange(0,3).col(3);
     // x right, y down, z forward
 
-    Eigen::Matrix<double,3,3> eigm = ORB_SLAM2::Converter::toMatrix3d(Rwc);
+    Eigen::Matrix<double,3,3> eigm = DXSLAM::Converter::toMatrix3d(Rwc);
     Eigen::Quaterniond eigq(eigm);
 
     geometry_msgs::PoseStamped msg;
@@ -283,7 +279,7 @@ void Maslam::publishPose(const cv::Mat &Tcw, const std_msgs::Header &image_heade
     sensor_msgs::PointCloud cloud;
     cloud.header.frame_id = p_ref_frame_;
     std::vector<geometry_msgs::Point32> geo_points;
-    std::vector<ORB_SLAM2::MapPoint*> points = slam_->GetTrackedMapPoints();
+    std::vector<DXSLAM::MapPoint*> points = slam_->GetTrackedMapPoints();
     //cout << points.size() << endl;
     for (std::vector<int>::size_type i = 0; i != points.size(); i++) {
 	    if (points[i]) {
@@ -301,7 +297,7 @@ void Maslam::publishPose(const cv::Mat &Tcw, const std_msgs::Header &image_heade
     pub_pc_.publish(cloud);
 }
 
-bool Maslam::getTransform(tf::StampedTransform &transform, std::string from, std::string to, ros::Time stamp)
+bool SLAMNode::getTransform(tf::StampedTransform &transform, std::string from, std::string to, ros::Time stamp)
 {
     try {
         //tf_listener_.waitForTransform(from, to, stamp, ros::Duration(0.5));
