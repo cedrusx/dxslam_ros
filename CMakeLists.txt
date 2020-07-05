@@ -28,7 +28,7 @@ endif()
 
 find_package(Pangolin REQUIRED)
 
-set(DXSLAM_SEARCH_PATH "${PROJECT_SOURCE_DIR}/../../;${PROJECT_SOURCE_DIR}/../../../;${PROJECT_SOURCE_DIR}/../../../../")
+set(DXSLAM_SEARCH_PATH "${PROJECT_SOURCE_DIR};${PROJECT_SOURCE_DIR}/../../;${PROJECT_SOURCE_DIR}/../../../;${PROJECT_SOURCE_DIR}/../../../../")
 find_path(DXSLAM_DIR
   dxslam/include/System.h
   ${DXSLAM_SEARCH_PATH}

@@ -1,0 +1,3 @@
+[submodule "dxslam"]
+	path = dxslam
+	url = https://github.com/cedrusx/dxslam
