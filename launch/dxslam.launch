@@ -13,7 +13,7 @@
     <param name="pub_tf_child_frame" value="base_link"/>
     <param name="image_topic" value="/d400/color/image_raw"/>
     <param name="depth_topic" value="/d400/aligned_depth_to_color/image_raw"/>
-    <param name="feature_topic" value="/d400/color/image_raw"/>
+    <param name="feature_topic" value="/d400/color/features"/>
   </node>
 
 </launch>

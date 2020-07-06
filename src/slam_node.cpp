@@ -54,7 +54,14 @@ private:
     typedef message_filters::sync_policies::ApproximateTime<sensor_msgs::Image, sensor_msgs::Image> sync_policy;
     message_filters::Synchronizer<sync_policy> image_sync_;
 
+    // buffers for un-synchronized messages
+    // the size limit bounds increasement only in case of no message at all on one of the topics
     std::queue<RGBDF> image_queue_;
+    std::queue<RGBDF> feature_queue_;
+    const size_t unsync_queue_size_ = 30;
+
+    // buffer for synchronized messages pending processing
+    // its size can be specified with a runtime param
     BlockingQueue<RGBDF> work_queue_;
 
     ros::Publisher pub_pose_, pub_pose2d_, pub_pc_;
@@ -144,11 +151,33 @@ void SLAMNode::imageCallback(const sensor_msgs::ImageConstPtr& msgRGB, const sen
         ROS_ERROR("cv_bridge exception: %s", e.what());
         return;
     }
-    RGBDF data;
-    data.header = msgRGB->header;
-    data.color = cv_ptrRGB->image;
-    data.depth = cv_ptrD->image;
-    image_queue_.push(data);
+
+    RGBDF features;
+    bool found = false;
+    while (!feature_queue_.empty()) {
+        features = feature_queue_.front();
+        feature_queue_.pop();
+        if (features.header.stamp == msgRGB->header.stamp) {
+            found = true;
+            break;
+        } else if (features.header.stamp > msgRGB->header.stamp) {
+            // missed the corresponding features
+            return;
+        }
+    }
+    if (found) {
+        features.color = cv_ptrRGB->image;
+        features.depth = cv_ptrD->image;
+        work_queue_.push(features);
+    } else {
+        RGBDF data;
+        data.header = msgRGB->header;
+        data.color = cv_ptrRGB->image;
+        data.depth = cv_ptrD->image;
+        image_queue_.push(data);
+        if (image_queue_.size() > unsync_queue_size_)
+            image_queue_.pop();
+    }
 }
 
 void SLAMNode::featureCallback(const image_feature_msgs::ImageFeaturesConstPtr& msg)
@@ -162,12 +191,15 @@ void SLAMNode::featureCallback(const image_feature_msgs::ImageFeaturesConstPtr& 
         if (image.header.stamp == msg->header.stamp) {
             found = true;
             break;
+        } else if (image.header.stamp > msg->header.stamp) {
+            // missed the image at given stamp
+            ROS_WARN("Could not find matched image for feature at %lf", msg->header.stamp.toSec());
+            return;
         }
-        if (image.header.stamp > msg->header.stamp) break;
     }
     if (!found) {
-        ROS_WARN("Could not find matched image for feature at %lf", msg->header.stamp.toSec());
-        return;
+        // image not yet arrived, put features into queue
+        image.header = msg->header;
     }
 
     // Copy the ros image message to cv::Mat.
@@ -188,8 +220,14 @@ void SLAMNode::featureCallback(const image_feature_msgs::ImageFeaturesConstPtr& 
     }
     image.global_desc = cv::Mat(msg->global_descriptor, CV_32F);
 
-    // invoke the worker
-    work_queue_.push(image);
+    if (found) {
+        // invoke the worker
+        work_queue_.push(image);
+    } else {
+        feature_queue_.push(image);
+        if (feature_queue_.size() > unsync_queue_size_)
+            feature_queue_.pop();
+    }
 }
 
 void SLAMNode::mainLoop()
@@ -303,7 +341,7 @@ bool SLAMNode::getTransform(tf::StampedTransform &transform, std::string from, s
         //tf_listener_.waitForTransform(from, to, stamp, ros::Duration(0.5));
         tf_listener_.lookupTransform(from, to, stamp, transform);
         return true;
-    } catch (tf::TransformException e) {
+    } catch (tf::TransformException &e) {
         ROS_ERROR("Failed to get transform from %s to %s: %s",
             from.c_str(), to.c_str(), e.what());
         return false;
