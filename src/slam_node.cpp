@@ -21,15 +21,16 @@
 #include <fstream>
 #include <iostream>
 #include <memory>
+#include <signal.h>
 
 class SLAMNode
 {
 public:
     SLAMNode();
 
-    ~SLAMNode();
-
     void mainLoop();
+
+    void stop();
 
 private:
     struct RGBDF {
@@ -75,13 +76,22 @@ private:
     const double planar_tol_ = 0.1;
 };
 
+SLAMNode *slam_node;
+
+void sigIntHandler(int sig)
+{
+   ros::shutdown();
+   if (slam_node) slam_node->stop();
+}
+
 int main(int argc, char **argv)
 {
-    ros::init(argc, argv, "dxslam");
-    SLAMNode node;
+    ros::init(argc, argv, "dxslam", ros::init_options::NoSigintHandler);
+    slam_node = new SLAMNode();
+    signal(SIGINT, sigIntHandler);
     ros::AsyncSpinner spinner(1);
     spinner.start();
-    node.mainLoop();
+    slam_node->mainLoop();
     return 0;
 }
 
@@ -120,8 +130,9 @@ SLAMNode::SLAMNode() : image_sync_(sync_policy(10))
     image_sync_.registerCallback(boost::bind(&SLAMNode::imageCallback, this, _1, _2));
 }
 
-SLAMNode::~SLAMNode()
+void SLAMNode::stop()
 {
+    work_queue_.close();
     slam_->Shutdown();
 
     // Save camera trajectory
