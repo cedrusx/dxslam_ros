@@ -111,7 +111,7 @@ SLAMNode::SLAMNode() : image_sync_(sync_policy(10))
     pnh.param("reference_frame", p_ref_frame_, std::string("vslam_origin"));
 
     pnh.param("vocabulary", p_vocabulary_, std::string(DXSLAM_PATH) + "/Vocabulary/super.fbow");
-    pnh.param("slam_settings", p_slam_settings_, std::string(CONFIG_PATH) + "/rs435.yaml");
+    pnh.param("slam_settings", p_slam_settings_, std::string(CONFIG_PATH) + "/openloris.yaml");
 
     std::cout << "DXSLAM vocabulary: " << p_vocabulary_ << "\n";
     std::cout << "DXSLAM settings: " << p_slam_settings_ << "\n";
@@ -144,7 +144,7 @@ void SLAMNode::imageCallback(const sensor_msgs::ImageConstPtr& msgRGB, const sen
     cv_bridge::CvImageConstPtr cv_ptrRGB;
     try
     {
-        cv_ptrRGB = cv_bridge::toCvCopy(msgRGB,sensor_msgs::image_encodings::BGR8);
+        cv_ptrRGB = cv_bridge::toCvCopy(msgRGB, sensor_msgs::image_encodings::RGB8);
     }
     catch (cv_bridge::Exception& e)
     {
