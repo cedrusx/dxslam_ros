@@ -9,7 +9,7 @@
     <author> Xuesong Shi </author>
     <author>xuesong.shi@intel.com</author>
     <maintainer email="xuesong.shi@intel.com">Xuesong Shi</maintainer>
-    <license>BSD</license>
+    <license>GPLv3</license>
 
     <buildtool_depend version_gte="0.5.68">catkin</buildtool_depend>
 

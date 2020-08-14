@@ -1,11 +1,20 @@
 # dxslam_ros
 
-This ROS package is a wrapper of DXSLAM described in this paper:
+This ROS package is a wrapper of DXSLAM described in [this paper](https://arxiv.org/pdf/2008.05416) (to be published in IROS 2020):
 
-> Dongjiang Li, Xuesong Shi, Qiwei Long, Shenghui Liu, Wei Yang, Fangshi Wang, Qi Wei, Fei Qiao. DXSLAM: A Robust and Efficient Visual SLAM System with Deep Features. Accepted for pubishing on IROS 2020.
+> Dongjiang Li, Xuesong Shi, Qiwei Long, Shenghui Liu, Wei Yang, Fangshi Wang, Qi Wei, Fei Qiao, "DXSLAM: A Robust and Efficient Visual SLAM System with Deep Features," arXiv preprint arXiv:2008.05416, 2020.
+
+```
+@article{li2020dxslam,
+  title={{DXSLAM}: A Robust and Efficient Visual {SLAM} System with Deep Features},
+  author={Dongjiang Li and Xuesong Shi and Qiwei Long and Shenghui Liu and Wei Yang and Fangshi Wang and Qi Wei and Fei Qiao},
+  journal={arXiv preprint arXiv:2008.05416},
+  year={2020}
+}
+```
 
 Note that the feature extraction module is a separate ROS package not described here. We suggest you to set it up firstly:
-[open_deep_features](https://github.com/cedrusx/open_deep_features)
+[deep_features](https://github.com/cedrusx/deep_features)
 
 # Setup
 
@@ -30,18 +39,23 @@ cd dxslam
 Finally, build `dxslam_ros` with your favorate catkin tool:
 ```
 cd YOUR_CATKIN_WS
-catkin_make    # OR catkin build
+. /opt/ros/VERSION/setup.bash
+catkin build    # OR catkin_make
 ```
 
 # Run
 
-Run `feature_extraction_node.py` from [open_deep_features](https://github.com/cedrusx/open_deep_features) to extract and publish features for images on a given topic:
+Run `feature_extraction_node.py` from `[deep_features](https://github.com/cedrusx/deep_features)/feature_extraction` to extract and publish features for images on a given topic:
 ```
-rosrun feature_extraction feature_extraction_node.py
+cd YOUR_CATKIN_WS
+. devel/setup.bash
+rosrun feature_extraction feature_extraction_node.py [PARAMS]
 ```
 
 And launch dxslam_ros in another terminal:
 ```
+cd YOUR_CATKIN_WS
+. devel/setup.bash
 roslaunch dxslam_ros dxslam.launch
 ```
 
