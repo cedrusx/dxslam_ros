@@ -302,48 +302,51 @@ void SLAMNode::publishPose(const cv::Mat &Tcw, const std_msgs::Header &image_hea
     }
 
     // Publish 2D pose
-    // 1. transform into the parent frame (usually "map")
-    geometry_msgs::PoseStamped pose2d;
-    tf_listener_.transformPose(parent_frame, msg, pose2d);
-    // 2. rotate from camera coordinate (right-down-forward) to ROS coordinate (forward-left-up)
-    tf::Quaternion q2d(pose2d.pose.orientation.x, pose2d.pose.orientation.y, pose2d.pose.orientation.z, pose2d.pose.orientation.w);
-    tf::Quaternion cam2map(0.5, -0.5, 0.5, 0.5);
-    q2d *= cam2map;
-    // 3. warn if the actual pose is not in the x-y plane
-    if (std::abs(pose2d.pose.position.z) > planar_tol_)
-        ROS_WARN("Non-planar position: (%lf, %lf, %lf)", pose2d.pose.position.x, pose2d.pose.position.y, pose2d.pose.position.z);
-    if (std::abs(q2d[0]) > planar_tol_ || std::abs(q2d[1]) > planar_tol_)
-        ROS_WARN("Non-planar orientation: (%lf, %lf, %lf, %lf)", q2d[0], q2d[1], q2d[2], q2d[3]);
-    // 4. make the pose strictly in the x-y plane and publish it
-    double norm_factor = 1. / std::sqrt(q2d[2] * q2d[2] + q2d[3] * q2d[3]);
-    pose2d.pose.position.z = 0;
-    pose2d.pose.orientation.x = 0;
-    pose2d.pose.orientation.y = 0;
-    pose2d.pose.orientation.z = q2d[2] * norm_factor;
-    pose2d.pose.orientation.w = q2d[3] * norm_factor;
-    pub_pose2d_.publish(pose2d);
-
-
-    // POINT CLOUD
-    sensor_msgs::PointCloud cloud;
-    cloud.header.frame_id = p_ref_frame_;
-    std::vector<geometry_msgs::Point32> geo_points;
-    std::vector<DXSLAM::MapPoint*> points = slam_->GetTrackedMapPoints();
-    //cout << points.size() << endl;
-    for (std::vector<int>::size_type i = 0; i != points.size(); i++) {
-	    if (points[i]) {
-		    cv::Mat coords = points[i]->GetWorldPos();
-		    geometry_msgs::Point32 pt;
-		    pt.x = coords.at<float>(0);
-		    pt.y = coords.at<float>(1);
-		    pt.z = coords.at<float>(2);
-		    geo_points.push_back(pt);
-	    } else {
-	    }
+    if (pub_pose2d_.getNumSubscribers() > 0) {
+        // 1. transform into the parent frame (usually "map")
+        geometry_msgs::PoseStamped pose2d;
+        tf_listener_.transformPose(parent_frame, msg, pose2d);
+        // 2. rotate from camera coordinate (right-down-forward) to ROS coordinate (forward-left-up)
+        tf::Quaternion q2d(pose2d.pose.orientation.x, pose2d.pose.orientation.y, pose2d.pose.orientation.z, pose2d.pose.orientation.w);
+        tf::Quaternion cam2map(0.5, -0.5, 0.5, 0.5);
+        q2d *= cam2map;
+        // 3. warn if the actual pose is not in the x-y plane
+        if (std::abs(pose2d.pose.position.z) > planar_tol_)
+            ROS_WARN("Non-planar position: (%lf, %lf, %lf)", pose2d.pose.position.x, pose2d.pose.position.y, pose2d.pose.position.z);
+        if (std::abs(q2d[0]) > planar_tol_ || std::abs(q2d[1]) > planar_tol_)
+            ROS_WARN("Non-planar orientation: (%lf, %lf, %lf, %lf)", q2d[0], q2d[1], q2d[2], q2d[3]);
+        // 4. make the pose strictly in the x-y plane and publish it
+        double norm_factor = 1. / std::sqrt(q2d[2] * q2d[2] + q2d[3] * q2d[3]);
+        pose2d.pose.position.z = 0;
+        pose2d.pose.orientation.x = 0;
+        pose2d.pose.orientation.y = 0;
+        pose2d.pose.orientation.z = q2d[2] * norm_factor;
+        pose2d.pose.orientation.w = q2d[3] * norm_factor;
+        pub_pose2d_.publish(pose2d);
     }
-    //cout << geo_points.size() << endl;
-    cloud.points = geo_points;
-    pub_pc_.publish(cloud);
+
+    // Publish map points
+    if (pub_pc_.getNumSubscribers() > 0) {
+        sensor_msgs::PointCloud cloud;
+        cloud.header.frame_id = p_ref_frame_;
+        std::vector<geometry_msgs::Point32> geo_points;
+        std::vector<DXSLAM::MapPoint*> points = slam_->GetTrackedMapPoints();
+        //cout << points.size() << endl;
+        for (std::vector<int>::size_type i = 0; i != points.size(); i++) {
+            if (points[i]) {
+                cv::Mat coords = points[i]->GetWorldPos();
+                geometry_msgs::Point32 pt;
+                pt.x = coords.at<float>(0);
+                pt.y = coords.at<float>(1);
+                pt.z = coords.at<float>(2);
+                geo_points.push_back(pt);
+            } else {
+            }
+        }
+        //cout << geo_points.size() << endl;
+        cloud.points = geo_points;
+        pub_pc_.publish(cloud);
+    }
 }
 
 bool SLAMNode::getTransform(tf::StampedTransform &transform, std::string from, std::string to, ros::Time stamp)
