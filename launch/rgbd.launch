@@ -12,6 +12,8 @@
   <!-- child frame for publishing poses to /tf; usually "base_link" or "camera_link";
        leave blank to use the frame specified in the color image messages -->
   <arg name="pub_tf_child_frame" default=""/>
+  <!-- config file, either filename under the config folder or an absolute path -->
+  <arg name="config" default="realsense_d435.yaml"/>
   <!-- whether to launch with gdb for debugging -->
   <arg name="gdb" default="false"/>
   <arg name="launch_prefix" default="gdb -ex run -args" if="$(arg gdb)"/>
@@ -21,6 +23,7 @@
   <node name="map_vslam_tf" pkg="tf" type="static_transform_publisher" args="0 0 0 -1.5708 0 -1.5708 $(arg pub_tf_parent_frame) /vslam_origin 100" />
 
   <node pkg="dxslam_ros" type="dxslam" name="dxslam" output="screen" launch-prefix="$(arg launch_prefix)">
+    <param name="config" value="$(arg config)"/>
     <param name="reference_frame" value="vslam_origin"/>
     <param name="pub_tf_parent_frame" value="vslam_origin"/>
     <param name="pub_tf_child_frame" value="$(arg pub_tf_child_frame)"/>

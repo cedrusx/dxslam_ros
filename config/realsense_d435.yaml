@@ -1,0 +1,43 @@
+%YAML:1.0
+
+#--------------------------------------------------------------------------------------------
+# Camera Parameters.
+# Either set Camera.fromTopic to 1 and set Camera.baseline (recommended),
+# or set Camera.fromTopic to 0 and set Camera.{fx,fy,cx,cy,k1,k2,p1,p2,k3,width,height,bf}.
+#--------------------------------------------------------------------------------------------
+
+# set to 1 to get camera intrinsics from a CameraInfo topic
+Camera.fromTopic: 1
+# baseline: 50mm for RS435, 55mm for RS415
+Camera.baseline: 0.05
+
+#--------------------------------------------------------------------------------------------
+# Additional Camera Parameters.
+#--------------------------------------------------------------------------------------------
+
+# Camera frames per second
+Camera.fps: 30
+
+# Color order of the images (0: BGR, 1: RGB. It is ignored if images are grayscale)
+Camera.RGB: 1
+
+# Close/Far threshold. Baseline times.
+ThDepth: 60.0
+
+# Deptmap values factor
+DepthMapFactor: 1000.0
+
+#--------------------------------------------------------------------------------------------
+# Viewer Parameters
+#--------------------------------------------------------------------------------------------
+Viewer.KeyFrameSize: 0.05
+Viewer.KeyFrameLineWidth: 1
+Viewer.GraphLineWidth: 0.9
+Viewer.PointSize: 2
+Viewer.CameraSize: 0.08
+Viewer.CameraLineWidth: 3
+Viewer.ViewpointX: 0
+Viewer.ViewpointY: -0.7
+Viewer.ViewpointZ: -1.8
+Viewer.ViewpointF: 500
+

@@ -1,5 +1,6 @@
 #include <System.h>
 #include <Converter.h>
+#include <image_feature_msgs/ImageFeatures.h>
 
 #include <ros/ros.h>
 #include <cv_bridge/cv_bridge.h>
@@ -8,14 +9,16 @@
 #include <message_filters/sync_policies/approximate_time.h>
 #include <opencv2/core/core.hpp>
 
-#include "sensor_msgs/PointCloud.h"
-#include "geometry_msgs/PoseStamped.h"
-#include "geometry_msgs/Point32.h"
+#include <sensor_msgs/CameraInfo.h>
+#include <sensor_msgs/PointCloud.h>
+#include <geometry_msgs/PoseStamped.h>
+#include <geometry_msgs/Point32.h>
 #include <tf/transform_datatypes.h>
 #include <tf/transform_broadcaster.h>
 #include <tf/transform_listener.h>
-#include <image_feature_msgs/ImageFeatures.h>
+
 #include "block_queue.hpp"
+
 #include <algorithm>
 #include <chrono>
 #include <fstream>
@@ -27,6 +30,8 @@ class SLAMNode
 {
 public:
     SLAMNode();
+
+    bool start();
 
     void mainLoop();
 
@@ -42,9 +47,11 @@ private:
         cv::Mat global_desc;
     };
 
-    void imageCallback(const sensor_msgs::ImageConstPtr& msgRGB, const sensor_msgs::ImageConstPtr& msgD);
+    void cameraInfoCallback(const sensor_msgs::CameraInfoConstPtr &msg);
 
-    void featureCallback(const image_feature_msgs::ImageFeaturesConstPtr& msg);
+    void imageCallback(const sensor_msgs::ImageConstPtr &msgRGB, const sensor_msgs::ImageConstPtr &msgD);
+
+    void featureCallback(const image_feature_msgs::ImageFeaturesConstPtr &msg);
 
     void publishPose(const cv::Mat &Tcw, const std_msgs::Header &image_header);
 
@@ -54,6 +61,7 @@ private:
     ros::Subscriber sub_feature_;
     typedef message_filters::sync_policies::ApproximateTime<sensor_msgs::Image, sensor_msgs::Image> sync_policy;
     message_filters::Synchronizer<sync_policy> image_sync_;
+    sensor_msgs::CameraInfoPtr camera_info_msg_;
 
     // buffers for un-synchronized messages
     // the size limit bounds increasement only in case of no message at all on one of the topics
@@ -70,9 +78,9 @@ private:
     tf::TransformBroadcaster tf_broadcaster_;
 
     std::unique_ptr<DXSLAM::System> slam_;
-    std::string p_image_topic_, p_depth_topic_, p_feature_topic_;
+    std::string p_image_topic_, p_depth_topic_, p_feature_topic_, p_camera_info_topic_;
     std::string p_ref_frame_, p_parent_frame_, p_child_frame_;
-    std::string p_vocabulary_, p_slam_settings_;
+    std::string p_vocabulary_, p_config_;
     const double planar_tol_ = 0.1;
 };
 
@@ -88,6 +96,7 @@ int main(int argc, char **argv)
 {
     ros::init(argc, argv, "dxslam", ros::init_options::NoSigintHandler);
     slam_node = new SLAMNode();
+    if (!slam_node->start()) return -1;
     signal(SIGINT, sigIntHandler);
     ros::AsyncSpinner spinner(1);
     spinner.start();
@@ -97,37 +106,97 @@ int main(int argc, char **argv)
 
 SLAMNode::SLAMNode() : image_sync_(sync_policy(10))
 {
-    ros::NodeHandle nh;
     ros::NodeHandle pnh("~");
 
     pnh.param("image_topic", p_image_topic_, std::string("/camera/color/image_raw"));
     pnh.param("depth_topic", p_depth_topic_, std::string("/camera/depth/image_raw"));
     pnh.param("feature_topic", p_feature_topic_, std::string("/camera/color/features"));
+    pnh.param("camera_info_topic", p_camera_info_topic_, std::string("/camera/color/camera_info"));
     int p_queue_size;
     pnh.param("queue_size", p_queue_size, 10);
+    work_queue_.set_queue_limit(p_queue_size);
     // Set ROS frames between which we should publish tf. Default: reference frame -> RGB image frame
     pnh.param("pub_tf_parent_frame", p_parent_frame_, std::string(""));
     pnh.param("pub_tf_child_frame", p_child_frame_, std::string(""));
     pnh.param("reference_frame", p_ref_frame_, std::string("vslam_origin"));
 
     pnh.param("vocabulary", p_vocabulary_, std::string(DXSLAM_PATH) + "/Vocabulary/super.fbow");
-    pnh.param("slam_settings", p_slam_settings_, std::string(CONFIG_PATH) + "/openloris.yaml");
+    pnh.param("config", p_config_, std::string(CONFIG_PATH) + "/openloris.yaml");
+}
 
-    std::cout << "DXSLAM vocabulary: " << p_vocabulary_ << "\n";
-    std::cout << "DXSLAM settings: " << p_slam_settings_ << "\n";
+bool SLAMNode::start()
+{
+    ros::NodeHandle nh;
+    ros::NodeHandle pnh("~");
+
+    auto exist = [](std::string filename) {
+        std::ifstream fs(filename);
+        if (!fs.good()) std::cerr << "File does not exist: " << filename << std::endl;
+        return fs.good();
+    };
+
+    if (!exist(p_vocabulary_)) {
+        p_vocabulary_ = std::string(DXSLAM_PATH) + "/Vocabulary/" + p_vocabulary_;
+        if (!exist(p_vocabulary_)) return false;
+    }
+    if (!exist(p_config_)) {
+        p_config_ = std::string(CONFIG_PATH) + '/' + p_config_;
+        if (!exist(p_config_)) return false;
+    }
+
+    std::cout << "Vocabulary: " << p_vocabulary_ << "\n";
+    std::cout << "Config: " << p_config_ << "\n";
+
+    // copy config file
+    std::string tmp_config_file("/tmp/slam-settings.yaml");
+    {
+        std::ifstream src(p_config_, std::ios::in | std::ios::binary);
+        std::ofstream dst(tmp_config_file, std::ios::out | std::ios::binary);
+        dst << src.rdbuf();
+        src.close();
+        dst.close();
+    }
+
+    // add camera info into the tmp config file if needed
+    cv::FileStorage config_fs(p_config_.c_str(), cv::FileStorage::READ);
+    if (config_fs["Camera.fromTopic"].real() > 0) {
+        //sensor_msgs::CameraInfoPtr ptr;
+        //void callback(sensor_msgs::CameraInfoPtr &ptr, const sensor_msgs::CameraInfoConstPtr &msg) { ptr = msg; };
+        ros::Subscriber sub_camera_info = nh.subscribe(p_camera_info_topic_, 1, &SLAMNode::cameraInfoCallback, this);
+        while (!camera_info_msg_) {
+            ros::spinOnce();
+            ROS_INFO_THROTTLE(3, "Waiting for camera info from %s", p_camera_info_topic_.c_str());
+        }
+        std::ofstream tmp_config(tmp_config_file, std::ios::app);
+        tmp_config << std::endl;
+        tmp_config << "Camera.fx: " << camera_info_msg_->K[0] << std::endl;
+        tmp_config << "Camera.fy: " << camera_info_msg_->K[4] << std::endl;
+        tmp_config << "Camera.cx: " << camera_info_msg_->K[2] << std::endl;
+        tmp_config << "Camera.cy: " << camera_info_msg_->K[5] << std::endl;
+        tmp_config << "Camera.k1: " << camera_info_msg_->D[0] << std::endl;
+        tmp_config << "Camera.k2: " << camera_info_msg_->D[1] << std::endl;
+        tmp_config << "Camera.p1: " << camera_info_msg_->D[2] << std::endl;
+        tmp_config << "Camera.p2: " << camera_info_msg_->D[3] << std::endl;
+        tmp_config << "Camera.k3: " << camera_info_msg_->D[4] << std::endl;
+        tmp_config << "Camera.width: " << camera_info_msg_->width << std::endl;
+        tmp_config << "Camera.height: " << camera_info_msg_->height << std::endl;
+        tmp_config << "Camera.bf: " << config_fs["Camera.baseline"].real() * camera_info_msg_->K[0] << std::endl;
+        tmp_config.close();
+    }
+
     // Create SLAM system. It initializes all system threads and gets ready to process frames.
-    slam_.reset(new DXSLAM::System(p_vocabulary_, p_slam_settings_, DXSLAM::System::RGBD, true));
+    slam_.reset(new DXSLAM::System(p_vocabulary_, tmp_config_file, DXSLAM::System::RGBD, true));
 
     pub_pc_ = pnh.advertise<sensor_msgs::PointCloud>("pointcloud", 1);
     pub_pose_ = pnh.advertise<geometry_msgs::PoseStamped>("pose", 1);
     pub_pose2d_ = pnh.advertise<geometry_msgs::PoseStamped>("pose2d", 1);
 
-    work_queue_.set_queue_limit(p_queue_size);
     sub_image_.subscribe(nh, p_image_topic_, 1000);
     sub_depth_.subscribe(nh, p_depth_topic_, 1000);
     sub_feature_ = nh.subscribe(p_feature_topic_, 10, &SLAMNode::featureCallback, this);
     image_sync_.connectInput(sub_image_, sub_depth_);
     image_sync_.registerCallback(boost::bind(&SLAMNode::imageCallback, this, _1, _2));
+    return true;
 }
 
 void SLAMNode::stop()
@@ -139,26 +208,25 @@ void SLAMNode::stop()
     //slam_->SaveKeyFrameTrajectoryTUM("KeyFrameTrajectory.txt");
 }
 
-void SLAMNode::imageCallback(const sensor_msgs::ImageConstPtr& msgRGB, const sensor_msgs::ImageConstPtr& msgD)
+void SLAMNode::cameraInfoCallback(const sensor_msgs::CameraInfoConstPtr &msg)
+{
+    camera_info_msg_.reset(new sensor_msgs::CameraInfo(*msg));
+}
+
+void SLAMNode::imageCallback(const sensor_msgs::ImageConstPtr &msgRGB, const sensor_msgs::ImageConstPtr &msgD)
 {
     cv_bridge::CvImageConstPtr cv_ptrRGB;
-    try
-    {
+    try {
         cv_ptrRGB = cv_bridge::toCvCopy(msgRGB, sensor_msgs::image_encodings::RGB8);
-    }
-    catch (cv_bridge::Exception& e)
-    {
+    } catch (cv_bridge::Exception& e) {
         ROS_ERROR("cv_bridge exception: %s", e.what());
         return;
     }
 
     cv_bridge::CvImageConstPtr cv_ptrD;
-    try
-    {
+    try {
         cv_ptrD = cv_bridge::toCvCopy(msgD, sensor_msgs::image_encodings::TYPE_16UC1);
-    }
-    catch (cv_bridge::Exception& e)
-    {
+    } catch (cv_bridge::Exception& e) {
         ROS_ERROR("cv_bridge exception: %s", e.what());
         return;
     }
@@ -191,7 +259,7 @@ void SLAMNode::imageCallback(const sensor_msgs::ImageConstPtr& msgRGB, const sen
     }
 }
 
-void SLAMNode::featureCallback(const image_feature_msgs::ImageFeaturesConstPtr& msg)
+void SLAMNode::featureCallback(const image_feature_msgs::ImageFeaturesConstPtr &msg)
 {
     // find the image with exact match of stamp
     RGBDF image;
