@@ -56,10 +56,10 @@ And launch dxslam_ros in another terminal:
 ```
 cd YOUR_CATKIN_WS
 . devel/setup.bash
-roslaunch dxslam_ros dxslam.launch
+roslaunch dxslam_ros rgbd.launch camera:=d400 pub_tf_child_frame:=base_link
 ```
 
 Then play your ROS bag or launch `realsense_ros` to provide a live stream.
-The default topics in `dxslam.launch` and `feature_extraction_node.py` are configurated for the [OpenLORIS-Scene](https://lifelong-robotic-vision.github.io/dataset/scene) datasets. You may need to change them if using other data.
+The arguments above are configurated for the [OpenLORIS-Scene](https://lifelong-robotic-vision.github.io/dataset/scene) datasets. You may need to change them if using other data.
 
 When succeeded, you should be able to see live tracking results in the DXSLAM GUI (same as in ORB_SLAM2), and properly maintained ROS tf and pose topics.
