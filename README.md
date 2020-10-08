@@ -45,7 +45,7 @@ catkin build    # OR catkin_make
 
 # Run
 
-Run `feature_extraction_node.py` from `[deep_features](https://github.com/cedrusx/deep_features)/feature_extraction` to extract and publish features for images on a given topic:
+Run `feature_extraction/feature_extraction_node.py` from [deep_features](https://github.com/cedrusx/deep_features) to extract and publish features for images on a given topic:
 ```
 cd YOUR_CATKIN_WS
 . devel/setup.bash
