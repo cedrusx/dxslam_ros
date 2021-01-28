@@ -1,23 +1,21 @@
+#include "block_queue.hpp"
+
 #include <System.h>
 #include <Converter.h>
-#include <image_feature_msgs/ImageFeatures.h>
 
-#include <ros/ros.h>
 #include <cv_bridge/cv_bridge.h>
+#include <geometry_msgs/Point32.h>
+#include <geometry_msgs/PoseStamped.h>
 #include <message_filters/subscriber.h>
-#include <message_filters/time_synchronizer.h>
 #include <message_filters/sync_policies/approximate_time.h>
+#include <message_filters/time_synchronizer.h>
 #include <opencv2/core/core.hpp>
-
+#include <ros/ros.h>
 #include <sensor_msgs/CameraInfo.h>
 #include <sensor_msgs/PointCloud.h>
-#include <geometry_msgs/PoseStamped.h>
-#include <geometry_msgs/Point32.h>
-#include <tf/transform_datatypes.h>
 #include <tf/transform_broadcaster.h>
+#include <tf/transform_datatypes.h>
 #include <tf/transform_listener.h>
-
-#include "block_queue.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -25,6 +23,29 @@
 #include <iostream>
 #include <memory>
 #include <signal.h>
+
+#ifdef BUILD_DXSLAM
+    #define SUBSCRIBE_FEATURES
+    using DXSLAM::System;
+    using DXSLAM::Converter;
+    using DXSLAM::MapPoint;
+    const std::string slam_node_name("dxslam");
+    const std::string default_vocabulary = std::string(DXSLAM_PATH) + "/Vocabulary/super.fbow";
+    const std::string default_config = std::string(CONFIG_PATH) + "/realsense_d435.yaml";
+#elif defined(BUILD_ORBSLAM2)
+    using ORB_SLAM2::System;
+    using ORB_SLAM2::Converter;
+    using ORB_SLAM2::MapPoint;
+    const std::string slam_node_name("orb_slam2");
+    const std::string default_vocabulary = std::string(ORBSLAM2_PATH) + "/Vocabulary/ORBvoc.txt";
+    const std::string default_config = std::string(CONFIG_PATH) + "/realsense_d435.yaml";
+#else
+    #error "Compiling option error: Please define which SLAM system to build with!"
+#endif
+
+#ifdef SUBSCRIBE_FEATURES
+#include <image_feature_msgs/ImageFeatures.h>
+#endif
 
 class SLAMNode
 {
@@ -51,8 +72,9 @@ private:
 
     void imageCallback(const sensor_msgs::ImageConstPtr &msgRGB, const sensor_msgs::ImageConstPtr &msgD);
 
+#ifdef SUBSCRIBE_FEATURES
     void featureCallback(const image_feature_msgs::ImageFeaturesConstPtr &msg);
-
+#endif
     void publishPose(const cv::Mat &Tcw, const std_msgs::Header &image_header);
 
     bool getTransform(tf::StampedTransform &transform, std::string from, std::string to, ros::Time stamp);
@@ -77,7 +99,7 @@ private:
     tf::TransformListener tf_listener_;
     tf::TransformBroadcaster tf_broadcaster_;
 
-    std::unique_ptr<DXSLAM::System> slam_;
+    std::unique_ptr<System> slam_;
     std::string p_image_topic_, p_depth_topic_, p_feature_topic_, p_camera_info_topic_;
     std::string p_ref_frame_, p_parent_frame_, p_child_frame_;
     std::string p_vocabulary_, p_config_;
@@ -94,7 +116,7 @@ void sigIntHandler(int sig)
 
 int main(int argc, char **argv)
 {
-    ros::init(argc, argv, "dxslam", ros::init_options::NoSigintHandler);
+    ros::init(argc, argv, slam_node_name, ros::init_options::NoSigintHandler);
     slam_node = new SLAMNode();
     if (!slam_node->start()) return -1;
     signal(SIGINT, sigIntHandler);
@@ -110,7 +132,9 @@ SLAMNode::SLAMNode() : image_sync_(sync_policy(10))
 
     pnh.param("image_topic", p_image_topic_, std::string("/camera/color/image_raw"));
     pnh.param("depth_topic", p_depth_topic_, std::string("/camera/depth/image_raw"));
+#ifdef SUBSCRIBE_FEATURES
     pnh.param("feature_topic", p_feature_topic_, std::string("/camera/color/features"));
+#endif
     pnh.param("camera_info_topic", p_camera_info_topic_, std::string("/camera/color/camera_info"));
     int p_queue_size;
     pnh.param("queue_size", p_queue_size, 10);
@@ -119,9 +143,8 @@ SLAMNode::SLAMNode() : image_sync_(sync_policy(10))
     pnh.param("pub_tf_parent_frame", p_parent_frame_, std::string(""));
     pnh.param("pub_tf_child_frame", p_child_frame_, std::string(""));
     pnh.param("reference_frame", p_ref_frame_, std::string("vslam_origin"));
-
-    pnh.param("vocabulary", p_vocabulary_, std::string(DXSLAM_PATH) + "/Vocabulary/super.fbow");
-    pnh.param("config", p_config_, std::string(CONFIG_PATH) + "/openloris.yaml");
+    pnh.param("vocabulary", p_vocabulary_, default_vocabulary);
+    pnh.param("config", p_config_, default_config);
 }
 
 bool SLAMNode::start()
@@ -135,12 +158,18 @@ bool SLAMNode::start()
         return fs.good();
     };
 
+    auto directory = [](std::string path) {
+        size_t pos = path.find_last_of("\\/");
+        return (std::string::npos == pos) ? "" : path.substr(0, pos);
+    };
+
+    // find the specified filenames in the same folder of the default vocabulary/config
     if (!exist(p_vocabulary_)) {
-        p_vocabulary_ = std::string(DXSLAM_PATH) + "/Vocabulary/" + p_vocabulary_;
+        p_vocabulary_ = directory(default_vocabulary) + "/" + p_vocabulary_;
         if (!exist(p_vocabulary_)) return false;
     }
     if (!exist(p_config_)) {
-        p_config_ = std::string(CONFIG_PATH) + '/' + p_config_;
+        p_config_ = directory(default_config) + '/' + p_config_;
         if (!exist(p_config_)) return false;
     }
 
@@ -185,7 +214,7 @@ bool SLAMNode::start()
     }
 
     // Create SLAM system. It initializes all system threads and gets ready to process frames.
-    slam_.reset(new DXSLAM::System(p_vocabulary_, tmp_config_file, DXSLAM::System::RGBD, true));
+    slam_.reset(new System(p_vocabulary_, tmp_config_file, System::RGBD, true));
 
     pub_pc_ = pnh.advertise<sensor_msgs::PointCloud>("pointcloud", 1);
     pub_pose_ = pnh.advertise<geometry_msgs::PoseStamped>("pose", 1);
@@ -193,7 +222,9 @@ bool SLAMNode::start()
 
     sub_image_.subscribe(nh, p_image_topic_, 1000);
     sub_depth_.subscribe(nh, p_depth_topic_, 1000);
+#ifdef SUBSCRIBE_FEATURES
     sub_feature_ = nh.subscribe(p_feature_topic_, 10, &SLAMNode::featureCallback, this);
+#endif
     image_sync_.connectInput(sub_image_, sub_depth_);
     image_sync_.registerCallback(boost::bind(&SLAMNode::imageCallback, this, _1, _2));
     return true;
@@ -230,7 +261,7 @@ void SLAMNode::imageCallback(const sensor_msgs::ImageConstPtr &msgRGB, const sen
         ROS_ERROR("cv_bridge exception: %s", e.what());
         return;
     }
-
+#ifdef SUBSCRIBE_FEATURES
     RGBDF features;
     bool found = false;
     while (!feature_queue_.empty()) {
@@ -257,8 +288,16 @@ void SLAMNode::imageCallback(const sensor_msgs::ImageConstPtr &msgRGB, const sen
         if (image_queue_.size() > unsync_queue_size_)
             image_queue_.pop();
     }
+#else
+    RGBDF data;
+    data.header = msgRGB->header;
+    data.color = cv_ptrRGB->image;
+    data.depth = cv_ptrD->image;
+    work_queue_.push(data);
+#endif
 }
 
+#ifdef SUBSCRIBE_FEATURES
 void SLAMNode::featureCallback(const image_feature_msgs::ImageFeaturesConstPtr &msg)
 {
     // find the image with exact match of stamp
@@ -308,13 +347,18 @@ void SLAMNode::featureCallback(const image_feature_msgs::ImageFeaturesConstPtr &
             feature_queue_.pop();
     }
 }
+#endif
 
 void SLAMNode::mainLoop()
 {
     while (ros::ok()) {
         RGBDF image;
         if (!work_queue_.pop(image)) break;
+#ifdef SUBSCRIBE_FEATURES
         cv::Mat Tcw = slam_->TrackRGBD(image.color, image.depth, image.header.stamp.toSec(), image.keypoints, image.local_desc, image.global_desc);
+#elif defined(BUILD_ORBSLAM2)
+        cv::Mat Tcw = slam_->TrackRGBD(image.color, image.depth, image.header.stamp.toSec());
+#endif
         if (Tcw.empty()) {
             ROS_ERROR("Empty pose result!");
             continue;
@@ -330,7 +374,7 @@ void SLAMNode::publishPose(const cv::Mat &Tcw, const std_msgs::Header &image_hea
     cv::Mat twc = -Rwc*Tcw.rowRange(0,3).col(3);
     // x right, y down, z forward
 
-    Eigen::Matrix<double,3,3> eigm = DXSLAM::Converter::toMatrix3d(Rwc);
+    Eigen::Matrix<double,3,3> eigm = Converter::toMatrix3d(Rwc);
     Eigen::Quaterniond eigq(eigm);
 
     geometry_msgs::PoseStamped msg;
@@ -398,7 +442,7 @@ void SLAMNode::publishPose(const cv::Mat &Tcw, const std_msgs::Header &image_hea
         sensor_msgs::PointCloud cloud;
         cloud.header.frame_id = p_ref_frame_;
         std::vector<geometry_msgs::Point32> geo_points;
-        std::vector<DXSLAM::MapPoint*> points = slam_->GetTrackedMapPoints();
+        std::vector<MapPoint*> points = slam_->GetTrackedMapPoints();
         //cout << points.size() << endl;
         for (std::vector<int>::size_type i = 0; i != points.size(); i++) {
             if (points[i]) {
