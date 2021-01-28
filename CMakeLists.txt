@@ -13,12 +13,15 @@ find_package(catkin REQUIRED
     tf
   )
 
-find_package(OpenCV 3.0 QUIET)
+find_package(OpenCV 4.0 QUIET)
+if(NOT OpenCV_FOUND)
+  find_package(OpenCV 3.0 QUIET)
+endif()
 if(NOT OpenCV_FOUND)
    find_package(OpenCV 2.4.3 QUIET)
-   if(NOT OpenCV_FOUND)
-      message(FATAL_ERROR "OpenCV > 2.4.3 not found.")
-   endif()
+endif()
+if(NOT OpenCV_FOUND)
+  message(FATAL_ERROR "OpenCV > 2.4.3 not found.")
 endif()
 
 find_package(Eigen3 REQUIRED)
@@ -30,16 +33,16 @@ find_package(Pangolin REQUIRED)
 
 set(SLAM_SEARCH_PATH "${PROJECT_SOURCE_DIR};${PROJECT_SOURCE_DIR}/../../;${PROJECT_SOURCE_DIR}/../../../;${PROJECT_SOURCE_DIR}/../../../../")
 
-set(DXSLAM_DIR "" CACHE FILEPATH "" FORCE)
+unset(DXSLAM_DIR CACHE)
 find_path(DXSLAM_DIR
   dxslam/include/System.h
   ${SLAM_SEARCH_PATH}
   )
 if(NOT DXSLAM_DIR)
-  set(BUILD_DXSLAM OFF)
+  set(BUILD_DXSLAM OFF CACHE BOOL "Build DXSLAM" FORCE)
   message(WARNING "DXSLAM not found under " ${SLAM_SEARCH_PATH})
 else()
-  set(BUILD_DXSLAM ON)
+  set(BUILD_DXSLAM ON CACHE BOOL "Build DXSLAM" FORCE)
   set(DXSLAM_TOP_DIR ${DXSLAM_DIR}/dxslam/)
   message(STATUS "Found DXSLAM: " ${DXSLAM_TOP_DIR})
   add_definitions(-DDXSLAM_PATH="${DXSLAM_TOP_DIR}")
@@ -55,16 +58,16 @@ else()
   )
 endif()
 
-set(ORBSLAM2_DIR "" CACHE FILEPATH "" FORCE)
+unset(ORBSLAM2_DIR CACHE)
 find_path(ORBSLAM2_DIR
   ORB_SLAM2/include/System.h
   ${SLAM_SEARCH_PATH}
   )
 if(NOT ORBSLAM2_DIR)
-  option(BUILD_ORBSLAM2 "Build ORB_SLAM2" OFF)
+  set(BUILD_ORBSLAM2 OFF CACHE BOOL "Build ORB_SLAM2" FORCE)
   message(WARNING "ORB_SLAM2 not found under " ${SLAM_SEARCH_PATH})
 else()
-  option(BUILD_ORBSLAM2 "Build ORB_SLAM2" ON)
+  set(BUILD_ORBSLAM2 ON CACHE BOOL "Build ORB_SLAM2" FORCE)
   set(ORBSLAM2_TOP_DIR ${ORBSLAM2_DIR}/ORB_SLAM2/)
   message(STATUS "Found ORB_SLAM2: " ${ORBSLAM2_TOP_DIR})
   add_definitions(-DORBSLAM2_PATH="${ORBSLAM2_TOP_DIR}")
@@ -100,7 +103,6 @@ set(COMMON_LIBS
 )
 
 if(BUILD_DXSLAM)
- message(FATAL_ERROR "BUILD DXSLAM")
   add_executable(dxslam src/slam_node.cpp)
   target_include_directories(dxslam PUBLIC ${COMMON_INCLUDE_DIRS} ${DXSLAM_INCLUDE_DIRS})
   target_link_libraries(dxslam ${COMMON_LIBS} ${DXSLAM_LIBRARIES})
