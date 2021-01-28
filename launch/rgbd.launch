@@ -1,4 +1,6 @@
 <launch>
+  <!-- SLAM algorithm (dxslam / orbslam2) -->
+  <arg name="slam" default="dxslam"/>
   <!-- default prefix of all the input topics -->
   <arg name="camera" default="camera"/>
   <!-- topic of the color images -->
@@ -22,7 +24,7 @@
   <!-- add a frame /vslam_origin, denoting the initial pose of the camera (optical frame) -->
   <node name="map_vslam_tf" pkg="tf" type="static_transform_publisher" args="0 0 0 -1.5708 0 -1.5708 $(arg pub_tf_parent_frame) /vslam_origin 100" />
 
-  <node pkg="dxslam_ros" type="dxslam" name="dxslam" output="screen" launch-prefix="$(arg launch_prefix)">
+  <node pkg="dxslam_ros" type="$(arg slam)" name="$(arg slam)" output="screen" launch-prefix="$(arg launch_prefix)">
     <param name="config" value="$(arg config)"/>
     <param name="reference_frame" value="vslam_origin"/>
     <param name="pub_tf_parent_frame" value="vslam_origin"/>
