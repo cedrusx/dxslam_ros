@@ -135,7 +135,11 @@ SLAMNode::SLAMNode() : image_sync_(sync_policy(10))
 #ifdef SUBSCRIBE_FEATURES
     pnh.param("feature_topic", p_feature_topic_, std::string("/camera/color/features"));
 #endif
-    pnh.param("camera_info_topic", p_camera_info_topic_, std::string("/camera/color/camera_info"));
+    auto replace_last_subtopic = [](std::string topic, std::string replace) {
+        return topic.substr(0, topic.find_last_of('/') + 1) + replace;
+    };
+    p_camera_info_topic_ = replace_last_subtopic(p_image_topic_, "camera_info");
+    pnh.param("camera_info_topic", p_camera_info_topic_, p_camera_info_topic_);
     int p_queue_size;
     pnh.param("queue_size", p_queue_size, 10);
     work_queue_.set_queue_limit(p_queue_size);
