@@ -364,7 +364,7 @@ void SLAMNode::mainLoop()
         cv::Mat Tcw = slam_->TrackRGBD(image.color, image.depth, image.header.stamp.toSec());
 #endif
         if (Tcw.empty()) {
-            ROS_ERROR("Empty pose result!");
+            ROS_ERROR_THROTTLE(1, "Tracking lost...");
             continue;
         }
         publishPose(Tcw, image.header);
