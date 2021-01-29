@@ -27,7 +27,7 @@
   <node pkg="dxslam_ros" type="$(arg slam)" name="$(arg slam)" output="screen" launch-prefix="$(arg launch_prefix)">
     <param name="config" value="$(arg config)"/>
     <param name="reference_frame" value="vslam_origin"/>
-    <param name="pub_tf_parent_frame" value="vslam_origin"/>
+    <param name="pub_tf_parent_frame" value="$(arg pub_tf_parent_frame)"/>
     <param name="pub_tf_child_frame" value="$(arg pub_tf_child_frame)"/>
     <param name="image_topic" value="$(arg image_topic)"/>
     <param name="depth_topic" value="$(arg depth_topic)"/>
