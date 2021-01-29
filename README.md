@@ -13,7 +13,7 @@ Note that the estimated pose from the SLAM system is the transform between the c
 
 If you use any of the systems in a research work, please properly cite the corresponding paper.
 
-### DXSLAM [code](https://github.com/ivipsourcecode/dxslam)[pdf](https://arxiv.org/pdf/2008.05416.pdf)
+### DXSLAM [[code](https://github.com/ivipsourcecode/dxslam)][[pdf](https://arxiv.org/pdf/2008.05416.pdf)]
 
 > Dongjiang Li, Xuesong Shi, Qiwei Long, Shenghui Liu, Wei Yang, Fangshi Wang, Qi Wei, Fei Qiao, "DXSLAM: A Robust and Efficient Visual SLAM System with Deep Features," in 2020 IEEE/RSJ International Conference on Intelligent Robots and Systems (IROS), Oct 2020, pp. 4958–4965.
 
@@ -28,7 +28,7 @@ If you use any of the systems in a research work, please properly cite the corre
 }
 ```
 
-### ORB-SLAM2
+### ORB-SLAM2 [[code](https://github.com/raulmur/ORB_SLAM2)][[pdf](https://arxiv.org/pdf/1610.06475.pdf)]
 
 > Raul Mur-Artal and Juan D Tard ́os, "ORB-SLAM2: An open-source SLAM system for monocular, stereo, and RGB-D cameras," IEEE Transactions on Robotics, vol. 33, no. 5, pp. 1255–1262, 2017.
 
