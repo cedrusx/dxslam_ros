@@ -30,7 +30,7 @@
     using DXSLAM::Converter;
     using DXSLAM::MapPoint;
     const std::string slam_node_name("dxslam");
-    const std::string default_vocabulary = std::string(DXSLAM_PATH) + "/Vocabulary/super.fbow";
+    const std::string default_vocabulary = std::string(DXSLAM_PATH) + "/Vocabulary/DXSLAM.fbow";
     const std::string default_config = std::string(CONFIG_PATH) + "/realsense_d435.yaml";
 #elif defined(BUILD_ORBSLAM2)
     using ORB_SLAM2::System;

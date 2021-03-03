@@ -16,6 +16,8 @@
   <arg name="pub_tf_child_frame" default=""/>
   <!-- config file, either filename under the config folder or an absolute path -->
   <arg name="config" default="realsense_d435.yaml"/>
+  <!-- vocabulary file, either filename under the Vocabulary folder or an absolute path -->
+  <arg name="vocabulary" default="DXSLAM.fbow"/>
   <!-- whether to launch with gdb for debugging -->
   <arg name="gdb" default="false"/>
   <arg name="launch_prefix" default="gdb -ex run -args" if="$(arg gdb)"/>
@@ -26,6 +28,7 @@
 
   <node pkg="dxslam_ros" type="$(arg slam)" name="$(arg slam)" output="screen" launch-prefix="$(arg launch_prefix)">
     <param name="config" value="$(arg config)"/>
+    <param name="vocabulary" value="$(arg vocabulary)"/>
     <param name="reference_frame" value="vslam_origin"/>
     <param name="pub_tf_parent_frame" value="$(arg pub_tf_parent_frame)"/>
     <param name="pub_tf_child_frame" value="$(arg pub_tf_child_frame)"/>
