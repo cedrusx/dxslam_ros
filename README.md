@@ -9,6 +9,8 @@ The node also takes care of ROS tf. It publishes the transformation from the wor
 
 Note that the estimated pose from the SLAM system is the transform between the current camera optical frame and a fixed reference frame. The ROS node will check other information from the tf tree, including tf between `pub_tf_parent_frame` and the reference frame, and that between `pub_tf_child_frame` to the camera optical frame (as specified in the header of the RGB image). It then calculates the tf between `pub_tf_parent_frame` and `pub_tf_child_frame` based on above information and the esaimted pose.
 
+It can also reads camera intrinsics from the camera_info topic (highly recommended so you don't have to change your config file when changing camera!). To enable it, put `Camera.fromTopic: 1` into your config file ([example](https://github.com/cedrusx/dxslam_ros/blob/dxslam/config/realsense_d435.yaml)).
+
 # Supported SLAM systems
 
 If you use any of the systems in a research work, please properly cite the corresponding paper.
